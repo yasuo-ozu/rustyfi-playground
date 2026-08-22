@@ -651,8 +651,17 @@ function typeset() {
 // ---------------------------------------------------------------------------
 
 const ANALYSE_DELAY_MS = 600;
+/// …and never further apart than this, however slow the document, or the
+/// feature stops feeling live and starts feeling broken.
+const ANALYSE_MAX_DELAY_MS = 4000;
 
 let analyseTimer = null;
+/// What the last analysis actually cost. 600 ms is the right pause for a
+/// document that takes 150 ms to check; for one that takes a second it is not,
+/// because the page would then spend more time blocked than idle. Backing the
+/// interval off to a multiple of the measured cost keeps that ratio roughly
+/// constant instead of guessing a number that suits one document size.
+let lastAnalysisMs = 0;
 /// Latched when the module traps. A trapped WebAssembly instance is unusable
 /// for good, so continuing to poke it on a timer would turn one bad document
 /// into an error every 600 ms forever.
@@ -663,19 +672,28 @@ let moduleTrapped = false;
 let analysedText = null;
 
 /// Ask for an analysis once the user stops typing.
-function scheduleAnalysis(delay = ANALYSE_DELAY_MS) {
+///
+/// `delay` is only passed as `0`, by the two things that replace what is in
+/// the editor outright (the example picker and the Lang selector) and should
+/// answer at once. Typing takes the debounce.
+function scheduleAnalysis(delay = null) {
   if (!rustyfi || moduleTrapped) return;
+  const wait = delay !== null
+    ? delay
+    : Math.min(Math.max(ANALYSE_DELAY_MS, lastAnalysisMs * 3), ANALYSE_MAX_DELAY_MS);
   if (analyseTimer) clearTimeout(analyseTimer);
   analyseTimer = setTimeout(() => {
     analyseTimer = null;
     analyseNow();
-  }, delay);
+  }, wait);
 }
 
 function analyseNow() {
   if (!rustyfi || moduleTrapped) return;
   const text = sourceEl.value;
+  const started = performance.now();
   const result = rustyfi.diagnostics(text, currentLang());
+  lastAnalysisMs = performance.now() - started;
   if (result.trapped) {
     // Same contract as `compile`: the instance is gone, so say so once and
     // stop. Typeset will report the same thing if it is pressed.

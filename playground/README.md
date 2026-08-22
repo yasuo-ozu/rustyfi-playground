@@ -53,6 +53,13 @@ look at the screen produces an answer. Everything here is on the main thread,
 so what matters is the delay plus the work; at 600 ms even the slowest example
 leaves the page idle most of the time.
 
+600 ms is a floor rather than a fixed interval: the page measures what each
+analysis actually costs and waits at least three times that, capped at four
+seconds. A document heavy enough to be felt is therefore checked less often
+instead of blocking the tab every time you pause, and the ratio of blocked to
+idle stays roughly constant across document sizes rather than being right for
+one of them.
+
 Positions come back **zero-based, with columns in UTF-16 code units**, which is
 exactly what `textarea.setSelectionRange` and `String.prototype.slice` count. A
 byte offset would be right only for ASCII and would misplace every marker in a
