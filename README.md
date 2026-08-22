@@ -1,9 +1,15 @@
 # rustyfi-playground
 
 [rustyfi](https://github.com/yasuo-ozu/rustyfi) — a native Rust port of the
-SATySFi typesetter — compiled to WebAssembly and running in a browser tab. No
-server, no upload, no package manager: you type a `.saty` document, the module
-typesets it, and the PDF appears beside it.
+SATySFi typesetter — compiled to WebAssembly and running in a browser tab. You
+type a `.saty` document, the module typesets it, and the PDF appears beside it:
+**typesetting never leaves the tab**, and there is no package manager to reach
+for.
+
+The one exception is deliberate and opt-in: the **Share** button builds a URL
+that carries your document, and shortening that URL hands it to
+[is.gd](https://is.gd/). Nothing calls out on load or on edit — only on that
+click, and the page says so next to the button.
 
 Live at <https://yasuo-ozu.github.io/rustyfi-playground/>.
 
@@ -26,9 +32,11 @@ playground/                 the page, its glue, and an offline self-test
 ## Getting a working checkout
 
 The submodule is not optional — `crates/rustyfi-wasm` path-depends on four
-crates inside it, and `build.rs` bakes that checkout's
-`lib-rustyfi/dist/packages/` into the module as the corpus `@require:` resolves
-against.
+crates inside it, and `build.rs` bakes two of that checkout's trees into the
+module as the corpus `@require:` resolves against: `lib-rustyfi/dist/packages/`
+(the frozen SATySFi 0.0.6 standard library) and a licence-cleared subset of
+`layout-tests/corpus/` (third-party packages such as `easytable`, `xpath` and
+SlyDIFi).
 
 ```console
 $ git clone --recurse-submodules git@github.com:yasuo-ozu/rustyfi-playground.git
@@ -65,6 +73,26 @@ $ git commit -m "rustyfi: move the pinned submodule to <sha>" rustyfi
 
 ## Licence
 
-MIT, matching rustyfi's own Rust crates. The SATySFi packages under
-`rustyfi/lib-rustyfi/` that the module bundles carry their own upstream
-licences; see the submodule.
+MIT, matching rustyfi's own Rust crates.
+
+The SATySFi packages the module bundles are **not** MIT-by-default and are not
+this project's to relicense. Each one's upstream licence was established from
+its own repository, its licence text is committed under `playground/licenses/`,
+and the deploy serves that text beside the page — the way the bundled font
+ships with its OFL. `crates/rustyfi-wasm/build.rs` refuses to bake in a package
+whose licence file is missing, so the two cannot drift apart.
+
+| Bundled | Origin | Licence |
+|---|---|---|
+| the SATySFi 0.0.6 standard library | [gfngfn/SATySFi](https://github.com/gfngfn/SATySFi) | LGPL-3.0 |
+| `base` | [nyuichi/satysfi-base](https://github.com/nyuichi/satysfi-base) | MIT |
+| `easytable`, `enumitem`, `figbox`, `railway`, `class-slydifi` | [monaqa](https://github.com/monaqa) | MIT |
+| `latexcmds`, `xpath` | [yasuo-ozu](https://github.com/yasuo-ozu) | LGPL-3.0 |
+
+Two projects from rustyfi's layout-test corpus are **deliberately not bundled**:
+`fss`, whose upstream repository ships no licence text (its `satysfi-fss.opam`
+declares `LGPL-3.0-or-later`, but a manifest field is not the grant), and
+`gakushin`, whose repository carries no licence either and which depends on
+`fss` regardless. Vendoring a package for layout testing is not the same act as
+redistributing it from a public website, and only the second one needs a
+licence.

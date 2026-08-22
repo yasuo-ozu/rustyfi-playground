@@ -1,6 +1,13 @@
 /target/
 
-# The Pages artifact `.github/workflows/pages.yml` assembles, and the wasm
-# module a local preview copies in beside `playground/index.html`.
+# The Pages artifact `.github/workflows/pages.yml` assembles, and the pieces a
+# local preview copies in beside `playground/index.html`. The workflow fetches
+# the font through the submodule's own script and takes the LGPL/GPL texts from
+# the submodule too, so committing either here would be a second copy to keep in
+# step. Every OTHER file under `playground/licenses/` is committed on purpose:
+# it is the licence of a package baked into the module.
 /_site/
 /playground/*.wasm
+/playground/fonts/
+/playground/licenses/LICENSE.LGPL-3.0.txt
+/playground/licenses/LICENSE.GPL-3.0.txt

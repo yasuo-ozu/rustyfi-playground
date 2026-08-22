@@ -6,10 +6,12 @@
 //! The interesting part is that this is not a cut-down pipeline. It runs the
 //! same `rustyfi_loader::load` -> merge -> `rustyfi_lang::compile_document_*`
 //! -> `rustyfi_pdf::render_pdf_with` sequence the CLI drives, over the real
-//! bundled 0.0.6 corpus (`lib-rustyfi/dist/packages/`, baked in by
-//! `build.rs`). A document may `@require: stdjabook` and get the actual
-//! package, resolved through the loader's own candidate search and dependency
-//! toposort.
+//! bundled corpus — the frozen 0.0.6 standard library
+//! (`lib-rustyfi/dist/packages/`) plus the licence-cleared third-party
+//! packages of `layout-tests/corpus/`, both baked in by `build.rs`. A document
+//! may `@require: stdjabook` or `@require: easytable/easytable` and get the
+//! actual package, resolved through the loader's own candidate search and
+//! dependency toposort.
 //!
 //! What makes that possible is [`rustyfi_loader::SourceProvider`]: the
 //! loader's whole filesystem surface on the `@require:`/`@import:` path is
@@ -74,7 +76,7 @@ const ENTRY_PATH: &str = "/rustyfi/doc/main.saty";
 /// filesystem.
 ///
 /// Every path is absolute and unique by construction (they are all built by
-/// joining onto [`VIRTUAL_ROOT`]), so canonicalization is identity — see
+/// joining onto [`VIRTUAL_ROOT`]), so canonicalization is LEXICAL — see
 /// [`SourceProvider::canonicalize`] for why that is enough.
 pub struct EmbeddedCorpus {
     files: BTreeMap<PathBuf, &'static str>,
@@ -90,7 +92,15 @@ impl EmbeddedCorpus {
         EmbeddedCorpus {
             files: CORPUS
                 .iter()
-                .map(|(name, text)| (packages.join(name), *text))
+                .map(|(name, text)| {
+                    // `build.rs` spells a nested package `easytable/matrix.satyg`
+                    // because that is the `@require:` path; joining the whole
+                    // string would keep the `/` verbatim on a host whose
+                    // separator is `\`, and then never match what the loader
+                    // builds component by component.
+                    let path = name.split('/').fold(packages.clone(), |p, part| p.join(part));
+                    (path, *text)
+                })
                 .collect(),
             entry: (PathBuf::from(ENTRY_PATH), source.to_string()),
         }
@@ -103,11 +113,37 @@ impl EmbeddedCorpus {
     }
 
     fn get(&self, path: &Path) -> Option<&str> {
+        let path = normalize(path);
         if path == self.entry.0 {
             return Some(&self.entry.1);
         }
-        self.files.get(path).copied()
+        self.files.get(&path).copied()
     }
+}
+
+/// Resolve `.` and `..` textually.
+///
+/// A nested package `@import:`s its siblings by relative path — SlyDIFi's
+/// themes say `@import: ../slydifi` — and the loader joins that onto the
+/// importing file's directory without normalizing, so the candidate arrives
+/// here as `.../class-slydifi/theme/../slydifi.satyh`. On a real filesystem
+/// `canonicalize` would collapse that; this map has to do it itself, and can,
+/// because the tree is entirely synthetic: every path is absolute, there are
+/// no symlinks, and so no `..` can mean anything other than "drop the previous
+/// component".
+fn normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 impl SourceProvider for EmbeddedCorpus {
@@ -124,18 +160,21 @@ impl SourceProvider for EmbeddedCorpus {
         self.get(path).is_some()
     }
 
-    /// Identity, for present paths only.
+    /// [`normalize`], for present paths only.
     ///
     /// Erroring on an absent path is what `std::fs::canonicalize` does, and
     /// the loader relies on it: a resolution candidate that does not exist
-    /// must not become a graph node. Identity is a sound canonical form here
-    /// because every path in this map was built by joining literal components
-    /// onto [`VIRTUAL_ROOT`] — none contains `.`, `..`, a symlink, or a
-    /// duplicate spelling, so two headers naming the same file already
-    /// produce the same `PathBuf`.
+    /// must not become a graph node. Lexical normalization is a sound
+    /// canonical form here because every path in this map was built by joining
+    /// literal components onto [`VIRTUAL_ROOT`] — there are no symlinks and no
+    /// duplicate spellings, so once `.` and `..` are folded away two headers
+    /// naming the same file produce the same `PathBuf`. Returning the
+    /// normalized form matters as well as accepting it: the loader keys its
+    /// dependency graph on what comes back, and a package reached once
+    /// directly and once through a `..` must be one node.
     fn canonicalize(&self, path: &Path) -> std::io::Result<PathBuf> {
         if self.is_file(path) {
-            return Ok(path.to_path_buf());
+            return Ok(normalize(path));
         }
         Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -146,15 +185,23 @@ impl SourceProvider for EmbeddedCorpus {
 
 /// The names a document may `@require:`, sorted — the bundled corpus with its
 /// extensions stripped.
+///
+/// A nested package keeps its prefix, because that prefix is part of the name:
+/// `easytable/easytable`, `base/typeset/base`.
 pub fn package_names() -> Vec<&'static str> {
-    CORPUS
+    let mut names: Vec<&'static str> = CORPUS
         .iter()
         .map(|(name, _)| {
             name.rsplit_once('.')
                 .map(|(stem, _ext)| stem)
                 .unwrap_or(name)
         })
-        .collect()
+        .collect();
+    // One name, two candidate extensions: `base/__sub__/base-sub` exists as
+    // both `.satyg` and `.satyh`, and a document spells it once either way.
+    // `CORPUS` is sorted, so the pair is adjacent.
+    names.dedup();
+    names
 }
 
 /// Compile a 0.0.6 SATySFi document to PDF bytes with the base-14 fonts.
@@ -333,7 +380,10 @@ fn for_a_reader(message: &str) -> String {
         .unwrap_or(message);
     match message.split_once("; searched: ") {
         Some((head, _paths)) if head.contains("cannot resolve `@require:") => {
-            format!("{head} — the playground serves a fixed package set; see the list below the editor")
+            format!(
+                "{head} — the playground serves a fixed package set; \
+                 see “Packages” in the header"
+            )
         }
         _ => message.replace(VIRTUAL_ROOT, ""),
     }
@@ -558,6 +608,49 @@ mod tests {
             "suspiciously small PDF: {} bytes",
             pdf.len()
         );
+    }
+
+    #[test]
+    fn a_nested_package_keeps_its_prefix_and_mounts_under_it() {
+        // A third-party package is published under a directory, and that
+        // directory is part of the `@require:` name.
+        let names = package_names();
+        assert!(names.contains(&"easytable/easytable"), "{names:?}");
+        assert!(names.contains(&"base/typeset/base"), "{names:?}");
+
+        let corpus = EmbeddedCorpus::new("");
+        let packages = Path::new(VIRTUAL_ROOT).join("dist").join("packages");
+        assert!(corpus.is_file(&packages.join("easytable").join("easytable.satyh")));
+        assert!(corpus.is_file(&packages.join("base").join("typeset").join("base.satyh")));
+    }
+
+    #[test]
+    fn a_relative_import_out_of_a_subdirectory_resolves() {
+        // SlyDIFi's themes `@import: ../slydifi`, and the loader hands that to
+        // us with the `..` still in it — on a real filesystem `canonicalize`
+        // would fold it away. Both the lookup AND the returned canonical form
+        // matter: the loader keys its dependency graph on what comes back.
+        let corpus = EmbeddedCorpus::new("");
+        let unfolded = Path::new(VIRTUAL_ROOT)
+            .join("dist/packages/class-slydifi/theme/../slydifi.satyh");
+        let folded = Path::new(VIRTUAL_ROOT).join("dist/packages/class-slydifi/slydifi.satyh");
+        assert!(corpus.is_file(&unfolded));
+        assert_eq!(corpus.canonicalize(&unfolded).unwrap(), folded);
+        assert_eq!(corpus.canonicalize(&folded).unwrap(), folded);
+    }
+
+    #[test]
+    fn a_document_requiring_a_nested_third_party_package_renders() {
+        let pdf = compile(
+            "@require: stdja-mini\n\
+             @require: easytable/easytable\n\
+             open EasyTableAlias\n\
+             document (|title = {t}; author = {a};|) '<\n  \
+               +easytable[l; r]{| a | b || c | d |}\n\
+             >\n",
+        )
+        .unwrap_or_else(|e| panic!("should compile: {e}"));
+        assert!(pdf.starts_with(b"%PDF-"));
     }
 
     #[test]
