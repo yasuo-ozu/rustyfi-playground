@@ -4,7 +4,9 @@
 SATySFi typesetter — compiled to WebAssembly and running in a browser tab. You
 type a `.saty` document, the module typesets it, and the PDF appears beside it:
 **typesetting never leaves the tab**, and there is no package manager to reach
-for.
+for. Mistakes are underlined in the editor as you type, without waiting for a
+typeset — see
+[Live diagnostics](playground/README.md#live-diagnostics).
 
 The one exception is deliberate and opt-in: the **Share** button builds a URL
 that carries your document, and shortening that URL hands it to a third-party

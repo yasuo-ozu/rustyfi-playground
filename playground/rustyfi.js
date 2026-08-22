@@ -76,6 +76,44 @@ function wrap(instance) {
       }
     },
 
+    /// Analyse SATySFi source without typesetting it, for live editor
+    /// diagnostics. Returns `{ ok: true, diagnostics: [...] }`, where each
+    /// entry is
+    ///
+    ///     { line, character, endLine, endCharacter, severity, message }
+    ///
+    /// with ZERO-BASED positions whose columns count UTF-16 code units — i.e.
+    /// exactly the units `textarea.setSelectionRange` and `String.length`
+    /// use, so a marker lands in the right place in a Japanese document.
+    /// A clean document yields an empty array.
+    ///
+    /// `lang` selects the generation, as for `compile`.
+    ///
+    /// Failure modes are the same two `compile` has, and are reported the same
+    /// way, because the caller has to treat them differently from "the
+    /// document has mistakes": `{ ok: false, error }` for an analysis that
+    /// could not run, additionally `trapped: true` if the module itself died.
+    /// A trapped module stays broken, so a caller running this on a timer must
+    /// stop when it sees that.
+    diagnostics(source, lang = 0) {
+      const src = new TextEncoder().encode(source);
+      let srcPtr = 0, srcLen = 0;
+      try {
+        [srcPtr, srcLen] = push(src);
+        const { ok, bytes } = take(ex.rustyfi_diagnostics(srcPtr, srcLen, lang));
+        if (!ok) return { ok: false, error: text(bytes) };
+        return { ok: true, diagnostics: JSON.parse(text(bytes)) };
+      } catch (e) {
+        return {
+          ok: false,
+          error: `the WebAssembly module trapped while analysing: ${e && e.message ? e.message : e}`,
+          trapped: true,
+        };
+      } finally {
+        if (srcPtr !== 0) ex.rustyfi_dealloc(srcPtr, srcLen);
+      }
+    },
+
     /// The package names a document may `@require:`, for one generation.
     packages(lang = 0) {
       const { bytes } = take(ex.rustyfi_packages_lang(lang));

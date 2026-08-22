@@ -138,13 +138,73 @@
     margin: 0 0 0.4rem; font-size: 0.76rem; text-transform: uppercase;
     letter-spacing: 0.07em; color: var(--muted); font-weight: 600;
   }
-  textarea {
-    width: 100%; flex: 1; min-height: 240px; resize: none;
-    padding: 0.8rem; border: 1px solid var(--line); border-radius: 9px;
-    background: var(--panel); color: var(--ink);
-    font-family: var(--mono); font-size: 13px; line-height: 1.5;
-    tab-size: 2;
+  /* THE EDITOR AND ITS DIAGNOSTIC UNDERLINES.
+     `#editor` stacks two boxes that must agree on every metric that affects
+     where a character lands: the `textarea` the user types into, and `#marks`,
+     a mirror of the same text underneath it carrying the underlines. The
+     shared declarations are in `#editor .layer` precisely so the two cannot
+     drift — a difference in padding, font or wrapping would soft-wrap the
+     mirror differently and put every underline on the wrong row.
+     The textarea is transparent so the mirror shows through; its text sits on
+     top, so selection, the caret and IME all behave as they did. */
+  #editor {
+    position: relative; flex: 1; min-height: 240px;
+    border: 1px solid var(--line); border-radius: 9px;
+    background: var(--panel); overflow: hidden;
   }
+  #editor .layer {
+    position: absolute; inset: 0;
+    margin: 0; padding: 0.8rem; border: 0;
+    font-family: var(--mono); font-size: 13px; line-height: 1.5;
+    letter-spacing: normal; tab-size: 2;
+    /* The pair a `textarea` wraps by under its own UA stylesheet. Stated on
+       BOTH layers so the mirror breaks lines exactly where the editor does. */
+    white-space: pre-wrap; overflow-wrap: break-word;
+  }
+  #editor textarea {
+    width: 100%; height: 100%; resize: none;
+    background: transparent; color: var(--ink);
+    border-radius: 9px; overflow: auto;
+  }
+  #marks {
+    /* Below the textarea, and inert: it exists only to be looked at. */
+    z-index: 0; pointer-events: none; overflow: hidden; color: transparent;
+  }
+  #marks mark {
+    background: transparent; color: transparent;
+    text-decoration: underline wavy var(--error-ink);
+    text-decoration-skip-ink: none;
+    text-underline-offset: 0.18em;
+  }
+  /* An empty range — a diagnostic that could not be given a width — still has
+     to be visible, so it borrows one character's worth of underline. */
+  #marks mark.empty::after { content: " "; }
+
+  /* The problems list. Deliberately under the editor rather than in the
+     right-hand pane: it is about the SOURCE, and the right pane belongs to
+     the PDF. It collapses to nothing when there is nothing to say. */
+  #diags { flex: none; margin-top: 0.4rem; font-size: 0.8rem; }
+  #diags:empty { display: none; }
+  #diags button {
+    display: block; width: 100%; text-align: left;
+    margin: 0 0 0.3rem; padding: 0.4rem 0.6rem;
+    border: 1px solid var(--error-line); border-radius: 7px;
+    background: var(--error-bg); color: var(--error-ink);
+    font: inherit; font-size: 0.8rem; line-height: 1.45; cursor: pointer;
+  }
+  #diags button:last-child { margin-bottom: 0; }
+  #diags button:hover { border-color: var(--error-ink); }
+  #diags button .at {
+    font-family: var(--mono); font-weight: 650; margin-right: 0.45rem;
+    white-space: nowrap;
+  }
+  #diags button .msg { word-break: break-word; }
+  #diags .note {
+    margin: 0.15rem 0 0; color: var(--muted); font-size: 0.74rem;
+  }
+  .pane > h2 .live { font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .pane > h2 .live.bad { color: var(--error-ink); }
+  .pane > h2 .live.good { color: var(--ok); }
   iframe {
     width: 100%; flex: 1; min-height: 240px;
     border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
@@ -234,8 +294,12 @@
 <main>
   <div class="grid">
     <section class="pane">
-      <h2>Source</h2>
-      <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+      <h2>Source <span class="live" id="live"></span></h2>
+      <div id="editor">
+        <div class="layer" id="marks" aria-hidden="true"></div>
+        <textarea class="layer" id="source" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+      </div>
+      <div id="diags" role="region" aria-live="polite" aria-label="Problems"></div>
     </section>
     <section class="pane">
       <h2>PDF <span id="dl"></span></h2>
@@ -263,6 +327,9 @@ const placeholderEl = $("placeholder");
 const compileBtn = $("compile");
 const shareBtn = $("share");
 const langEl = $("lang");
+const marksEl = $("marks");
+const diagsEl = $("diags");
+const liveEl = $("live");
 
 /// `0` for SATySFi 0.0.6, `1` for 0.1 — the wire value the module expects.
 const currentLang = () => Number(langEl.value) || 0;
@@ -440,6 +507,9 @@ $("example").addEventListener("change", (e) => {
   // switch, would both be worse: the first discards their work, the second
   // makes it impossible to see what the other generation makes of a document.
   selectLang(chosen ? chosen.lang ?? 0 : sharedLang);
+  // A whole new document: whatever was underlined described the old one.
+  invalidateDiagnostics();
+  scheduleAnalysis(0);
 });
 
 // A shared document wins over the default example, and takes the picker with
@@ -548,10 +618,215 @@ function typeset() {
       statusEl.className = "";
       statusEl.textContent = `failed in ${ms} ms`;
       showError(result.error);
+      // A trap kills the instance for good, so the analysis timer has to stop
+      // too — otherwise it would keep failing every 600 ms against a module
+      // that no longer exists.
+      if (result.trapped) moduleTrapped = true;
     }
     compileBtn.disabled = false;
   });
 }
+
+// ---------------------------------------------------------------------------
+// LIVE DIAGNOSTICS
+//
+// The module analyses a document without typesetting it (no rendering, no
+// font), which on every example this page ships takes between 3 and 620 ms —
+// measured, with the heaviest being the xpath logo. That is fast enough to run
+// on a pause in typing and much too slow to run on a keystroke, so it is
+// debounced.
+//
+// 600 ms, chosen against those two numbers: comfortably longer than the gap
+// between keystrokes of anyone typing continuously (so a burst of typing costs
+// ONE analysis, not one per character), and short enough that stopping to look
+// at the screen produces an answer before you have finished looking. The
+// analysis runs on the main thread — everything in this page does — so the
+// figure that matters is not the delay but the delay PLUS the work: at 600 ms
+// even the worst example leaves the page idle most of the time, and a typical
+// document is imperceptible.
+// ---------------------------------------------------------------------------
+
+const ANALYSE_DELAY_MS = 600;
+
+let analyseTimer = null;
+/// Latched when the module traps. A trapped WebAssembly instance is unusable
+/// for good, so continuing to poke it on a timer would turn one bad document
+/// into an error every 600 ms forever.
+let moduleTrapped = false;
+/// The text the diagnostics on screen were computed from. While the editor
+/// holds anything else, the underlines are stale and are taken down: an
+/// underline is a claim about a position, and the position moved.
+let analysedText = null;
+
+/// Ask for an analysis once the user stops typing.
+function scheduleAnalysis(delay = ANALYSE_DELAY_MS) {
+  if (!rustyfi || moduleTrapped) return;
+  if (analyseTimer) clearTimeout(analyseTimer);
+  analyseTimer = setTimeout(() => {
+    analyseTimer = null;
+    analyseNow();
+  }, delay);
+}
+
+function analyseNow() {
+  if (!rustyfi || moduleTrapped) return;
+  const text = sourceEl.value;
+  const result = rustyfi.diagnostics(text, currentLang());
+  if (result.trapped) {
+    // Same contract as `compile`: the instance is gone, so say so once and
+    // stop. Typeset will report the same thing if it is pressed.
+    moduleTrapped = true;
+    showDiagnostics(text, []);
+    liveEl.className = "live bad";
+    liveEl.textContent = "— analysis stopped (the module trapped; reload the page)";
+    return;
+  }
+  if (!result.ok) {
+    // The analysis could not run at all, which is not the same as "the
+    // document is fine" and must not be shown as it.
+    showDiagnostics(text, []);
+    liveEl.className = "live bad";
+    liveEl.textContent = "— could not analyse";
+    return;
+  }
+  showDiagnostics(text, result.diagnostics);
+}
+
+/// Absolute UTF-16 offsets for a diagnostic's range within `text`.
+///
+/// Exact rather than approximate, and this is the whole reason the module
+/// reports UTF-16 columns: a JavaScript string is a UTF-16 code-unit sequence,
+/// so `line.length` and `setSelectionRange` count the same units the module
+/// counted. A byte offset would be right only for ASCII, which the examples
+/// this page ships are conspicuously not.
+function rangeOf(text, lineStarts, d) {
+  const at = (line, character) => {
+    const l = Math.min(Math.max(line, 0), lineStarts.length - 1);
+    const lineLen = (l + 1 < lineStarts.length ? lineStarts[l + 1] - 1 : text.length) - lineStarts[l];
+    return lineStarts[l] + Math.min(Math.max(character, 0), lineLen);
+  };
+  const start = at(d.line, d.character);
+  return [start, Math.max(start, at(d.endLine, d.endCharacter))];
+}
+
+/// The offset each line of `text` starts at.
+function lineStartsOf(text) {
+  const starts = [0];
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) starts.push(i + 1);
+  return starts;
+}
+
+/// Draw `diagnostics` over `text`: underlines in the editor, rows underneath.
+function showDiagnostics(text, diagnostics) {
+  analysedText = text;
+  diagsEl.style.opacity = "1";
+  const lineStarts = lineStartsOf(text);
+  const ranges = diagnostics
+    .map((d) => rangeOf(text, lineStarts, d))
+    // A zero-width range is how the module says "I could not place this" — a
+    // failure inside a bundled package, or one the compiler reported with no
+    // position. Underlining the first character would be a claim it did not
+    // make, so nothing is drawn and the row below says "document".
+    .filter(([a, b]) => b > a)
+    .sort((p, q) => p[0] - q[0]);
+
+  // The mirror: the same text, with `<mark>` around each range. Overlapping
+  // ranges are merged, because nesting `<mark>`s would double the underline.
+  const parts = [];
+  let cursor = 0;
+  for (const [start, end] of ranges) {
+    if (end <= cursor) continue;
+    const from = Math.max(start, cursor);
+    if (from > cursor) parts.push(document.createTextNode(text.slice(cursor, from)));
+    const mark = document.createElement("mark");
+    mark.textContent = text.slice(from, end);
+    parts.push(mark);
+    cursor = end;
+  }
+  // The trailing newline keeps the mirror's last line from collapsing, which
+  // would otherwise let its total height differ from the textarea's.
+  parts.push(document.createTextNode(text.slice(cursor) + "\n"));
+  marksEl.replaceChildren(...parts);
+  syncMarks();
+
+  // The rows. Each one moves the caret to what it is talking about, which is
+  // the whole point of positioning a diagnostic rather than printing it.
+  const rows = diagnostics.map((d, i) => {
+    const [start, end] = rangeOf(text, lineStarts, d);
+    const placed = end > start;
+    const row = el("button", { type: "button", className: d.severity });
+    row.append(el("span", {
+      className: "at",
+      textContent: placed ? `${d.line + 1}:${d.character + 1}` : "document",
+    }));
+    row.append(el("span", { className: "msg", textContent: d.message }));
+    row.addEventListener("click", () => {
+      sourceEl.focus();
+      if (placed) {
+        sourceEl.setSelectionRange(start, end);
+        // `setSelectionRange` does not scroll on its own in every browser;
+        // nudging scrollTop by the selected line's position does.
+        const before = text.slice(0, start).split("\n").length - 1;
+        const lineHeight = parseFloat(getComputedStyle(sourceEl).lineHeight) || 19.5;
+        const wanted = before * lineHeight - sourceEl.clientHeight / 3;
+        if (wanted < sourceEl.scrollTop || wanted > sourceEl.scrollTop + sourceEl.clientHeight) {
+          sourceEl.scrollTop = Math.max(0, wanted);
+        }
+      }
+      syncMarks();
+    });
+    return row;
+  });
+  if (rows.length > 0) {
+    // Said in the interface, not only in the source: the module stops at the
+    // first thing it cannot get past, so "1 problem" means "one found", never
+    // "one exists".
+    rows.push(el("p", {
+      className: "note",
+      textContent: "Analysis stops at the first problem, so there may be more.",
+    }));
+  }
+  diagsEl.replaceChildren(...rows);
+
+  liveEl.className = diagnostics.length > 0 ? "live bad" : "live good";
+  liveEl.textContent = diagnostics.length === 0
+    ? "— no problems"
+    : `— ${diagnostics.length} problem${diagnostics.length === 1 ? "" : "s"}`;
+}
+
+/// Keep the mirror lined up with the editor.
+///
+/// Two things can move it: scrolling, and the appearance of the textarea's
+/// scrollbar, which narrows the text and re-wraps it. The mirror has no
+/// scrollbar of its own, so it is given the missing width as padding —
+/// otherwise a document long enough to scroll would wrap differently in the
+/// two layers and every underline past the first wrapped line would slide.
+function syncMarks() {
+  marksEl.scrollTop = sourceEl.scrollTop;
+  marksEl.scrollLeft = sourceEl.scrollLeft;
+  const gutter = sourceEl.offsetWidth - sourceEl.clientWidth;
+  const pad = getComputedStyle(sourceEl).paddingRight;
+  marksEl.style.paddingRight = gutter > 0 ? `calc(${pad} + ${gutter}px)` : pad;
+}
+
+/// Take the underlines down while the text they describe is out of date.
+function invalidateDiagnostics() {
+  if (analysedText !== null && analysedText !== sourceEl.value) {
+    marksEl.replaceChildren();
+    diagsEl.style.opacity = "0.5";
+    liveEl.className = "live";
+    liveEl.textContent = "— checking…";
+  }
+}
+
+sourceEl.addEventListener("scroll", syncMarks, { passive: true });
+sourceEl.addEventListener("input", () => {
+  invalidateDiagnostics();
+  scheduleAnalysis();
+});
+// The editor is a flex child of a responsive grid, so its width — and with it
+// where every line wraps — changes without any input event.
+if (window.ResizeObserver) new ResizeObserver(syncMarks).observe($("editor"));
 
 /// The two generations have different corpora, so the panel and its count are
 /// re-read from the module rather than filtered client-side.
@@ -570,6 +845,12 @@ langEl.addEventListener("change", () => {
   statusEl.textContent =
     `SATySFi ${langEl.options[langEl.selectedIndex].textContent} \u2014 ` +
     `${names.length} packages bundled`;
+  // The same text means something else under the other grammar, so every
+  // diagnostic on screen is now about a reading nobody asked for. Re-run at
+  // once rather than on a timer: this is a deliberate click, not typing.
+  marksEl.replaceChildren();
+  analysedText = null;
+  scheduleAnalysis(0);
 });
 
 compileBtn.addEventListener("click", typeset);
@@ -597,6 +878,9 @@ try {
     );
   }
   typeset();
+  // On the timer rather than straight away, so the opening render — which
+  // `typeset` defers to the next frame — is not held up behind it.
+  scheduleAnalysis();
 } catch (e) {
   statusEl.textContent = "failed to load";
   showError(

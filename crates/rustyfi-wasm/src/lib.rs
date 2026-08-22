@@ -46,11 +46,22 @@
 //! `__wbindgen_*` glue a host would have to satisfy, and — since no
 //! wasm-only dependency is involved — this crate is an ordinary workspace
 //! member that host `cargo test` keeps honest. See [`rustyfi_compile`].
+//!
+//! # Editor diagnostics
+//!
+//! [`rustyfi_diagnostics`] answers "what is wrong with this document, and
+//! where", as positioned JSON an editor can place. It is a separate entry
+//! point from [`rustyfi_compile`] because it does strictly less work — no
+//! rendering, no font — which is what makes it cheap enough to run on a pause
+//! in typing. See the [`diagnostics`] module for the honest account of how
+//! much analysis is behind it today.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use rustyfi_loader::{LoadOptions, SourceProvider};
+
+pub mod diagnostics;
 
 include!(concat!(env!("OUT_DIR"), "/corpus.rs"));
 
@@ -293,20 +304,6 @@ pub fn compile_with_font_lang(
     font: Option<Vec<u8>>,
     lang: Lang,
 ) -> Result<Vec<u8>, String> {
-    let corpus = EmbeddedCorpus::for_lang(source, lang);
-    let entry = corpus.entry_path().to_path_buf();
-
-    let program = rustyfi_loader::load(
-        &entry,
-        &LoadOptions {
-            lib_root: Some(PathBuf::from(VIRTUAL_ROOT)),
-            sources: Some(Box::new(corpus)),
-            version: lang.to_version(),
-            ..Default::default()
-        },
-    )
-    .map_err(|e| e.to_string())?;
-
     let store = font
         .map(|bytes| {
             rustyfi_pdf::TtfFontStore::from_bytes(bytes, None, None, "the uploaded font")
@@ -319,22 +316,7 @@ pub fn compile_with_font_lang(
         None => &base14,
     };
 
-    let mut aux = rustyfi_lang::crossref::AuxTable::new();
-    // Mirrors the CLI's own dispatch: 0.1 libraries are modules, not
-    // prelude-concatenable flat binding lists, so they never go through
-    // `merge_program`. The CLI's third arm — a 0.0.6 root with a foreign 0.1
-    // dependency — cannot arise here, because exactly one corpus is mounted.
-    let doc = match lang {
-        Lang::V0_1 => rustyfi_lang::compile_document_v1_with_aux(&program.files, metrics, &mut aux)
-            .map_err(|e| e.to_string())?
-            .0,
-        Lang::V0_0 => {
-            let (merged, stages) = merge_program(program)?;
-            rustyfi_lang::compile_document_cst_with_stages(&merged, metrics, &mut aux, &stages)
-                .map_err(|e| e.to_string())?
-                .0
-        }
-    };
+    let doc = build_document(source, metrics, lang)?;
 
     match &store {
         // A real face means CID/TrueType embedding, which is also the only
@@ -349,6 +331,69 @@ pub fn compile_with_font_lang(
         None => rustyfi_pdf::render_pdf_with(&doc.geometry, &doc.pages, &doc.images, &doc.extras),
     }
     .map_err(|e| e.to_string())
+}
+
+/// Everything up to and including layout: load `@require:`s out of the
+/// bundled corpus, then run the generation's own compile entry point.
+///
+/// Split out of [`compile_with_font_lang`] so that [`check_lang`] can stop
+/// here. The `Err` is the compiler's message VERBATIM — including the virtual
+/// paths [`for_a_reader`] later strips — because those paths are what say
+/// which file a reported position belongs to.
+fn build_document(
+    source: &str,
+    metrics: &dyn rustyfi_backend::FontMetrics,
+    lang: Lang,
+) -> Result<std::rc::Rc<rustyfi_lang::value::DocumentValue>, String> {
+    let corpus = EmbeddedCorpus::for_lang(source, lang);
+    let entry = corpus.entry_path().to_path_buf();
+
+    let program = rustyfi_loader::load(
+        &entry,
+        &LoadOptions {
+            lib_root: Some(PathBuf::from(VIRTUAL_ROOT)),
+            sources: Some(Box::new(corpus)),
+            version: lang.to_version(),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut aux = rustyfi_lang::crossref::AuxTable::new();
+    // Mirrors the CLI's own dispatch: 0.1 libraries are modules, not
+    // prelude-concatenable flat binding lists, so they never go through
+    // `merge_program`. The CLI's third arm — a 0.0.6 root with a foreign 0.1
+    // dependency — cannot arise here, because exactly one corpus is mounted.
+    Ok(match lang {
+        Lang::V0_1 => rustyfi_lang::compile_document_v1_with_aux(&program.files, metrics, &mut aux)
+            .map_err(|e| e.to_string())?
+            .0,
+        Lang::V0_0 => {
+            let (merged, stages) = merge_program(program)?;
+            rustyfi_lang::compile_document_cst_with_stages(&merged, metrics, &mut aux, &stages)
+                .map_err(|e| e.to_string())?
+                .0
+        }
+    })
+}
+
+/// Compile `source` far enough to know whether it is correct, and throw the
+/// document away.
+///
+/// What [`diagnostics::analyze`] runs. Two deliberate differences from
+/// [`compile_with_font_lang`], both of which make this the right thing to run
+/// on a pause in typing rather than on a button press:
+///
+/// * **no PDF is written.** Rendering is the only phase that can fail for a
+///   reason that is not a mistake in the document — a glyph the chosen font
+///   cannot encode — and an editor that underlines an em dash because the
+///   base-14 fonts are Latin would be worse than no editor support at all.
+/// * **no font is taken.** Layout needs metrics, so base-14's are used; a
+///   supplied face would otherwise have to be copied across the ABI on every
+///   keystroke pause, a megabyte at a time, to change nothing this reports.
+///   Line breaking does differ between the two, but no *diagnostic* does.
+pub fn check_lang(source: &str, lang: Lang) -> Result<(), String> {
+    build_document(source, &rustyfi_pdf::Base14Metrics, lang).map(|_| ())
 }
 
 /// Concatenate every library's prelude ahead of the entry's, recording the
@@ -592,6 +637,48 @@ pub unsafe extern "C" fn rustyfi_compile_with_font_lang(
         Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
     };
     Output::from_result(result).into_raw()
+}
+
+/// Analyse the UTF-8 document in `src[..len]` and return its diagnostics as a
+/// **JSON array**, in a successful [`Output`]:
+///
+/// ```json
+/// [{"line":1,"character":8,"endLine":1,"endCharacter":22,
+///   "severity":"error","message":"unbound variable 'nosuchvariable'"}]
+/// ```
+///
+/// Positions are zero-based and columns count UTF-16 code units, so they can
+/// be handed straight to a `textarea`'s `setSelectionRange`. A clean document
+/// yields `[]`. `lang == 1` is 0.1, anything else 0.0.6 — analysing 0.1 source
+/// under 0.0.6's grammar reports a parse error on its first 0.1-only
+/// construct, which is correct but useless, so the caller must pass what the
+/// user selected.
+///
+/// A FAILED [`Output`] means the analysis itself could not run (the source was
+/// not UTF-8); it never means "the document has errors", which is a successful
+/// `Output` carrying a non-empty array.
+///
+/// See [`diagnostics::analyze`] for what this currently is: one diagnostic
+/// derived from a compile, not a full analysis.
+///
+/// # Safety
+/// `src` must point to at least `len` readable bytes for the duration of the
+/// call. A null `src` is only valid with `len == 0`.
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_diagnostics(src: *const u8, len: usize, lang: u32) -> *mut Output {
+    let bytes: &[u8] = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src, len) }
+    };
+    match std::str::from_utf8(bytes) {
+        Ok(source) => Output {
+            ok: true,
+            bytes: diagnostics::analyze_json(source, Lang::from_u32(lang)).into_bytes(),
+        },
+        Err(e) => Output::from_result(Err(format!("document source is not valid UTF-8: {e}"))),
+    }
+    .into_raw()
 }
 
 /// The bundled package names for one generation, newline-separated.

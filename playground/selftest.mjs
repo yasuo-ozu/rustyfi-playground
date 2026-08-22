@@ -365,6 +365,134 @@ for (const [name, text] of shareCases) {
   check("rubbish in the parameter means 0.0.6", shareLang("?src=1abc&lang=banana") === 0);
 }
 
+// 10. Live diagnostics. The page runs these on every pause in typing, so the
+//     properties that matter are: a clean document says nothing, a broken one
+//     is positioned WHERE it is broken, and neither can leave the module
+//     unusable. Positions are zero-based and count UTF-16 code units, so they
+//     are checked against `String.prototype.slice` — the same units a
+//     `textarea` uses, which is the whole point of reporting them that way.
+{
+  const CLEAN = `@require: stdja-mini
+document (|title = {t}; author = {a};|) '<
+  +p { Nothing wrong here. }
+>
+`;
+  const clean = rustyfi.diagnostics(CLEAN);
+  check("a clean document analyses", clean.ok, clean.ok ? "" : clean.error);
+  check("a clean document has no diagnostics", clean.ok && clean.diagnostics.length === 0,
+    clean.ok ? JSON.stringify(clean.diagnostics) : "");
+
+  // Every field the page reads is present and of the right kind — a missing
+  // `endCharacter` would silently produce a zero-width, invisible marker.
+  const shape = (d) =>
+    ["line", "character", "endLine", "endCharacter"].every((k) => Number.isInteger(d[k])) &&
+    typeof d.message === "string" && d.message.length > 0 &&
+    (d.severity === "error" || d.severity === "warning");
+
+  // A syntax error, at the line it is on. Line 4 of the source (`>>>`), which
+  // is index 3 zero-based — getting THAT wrong by one is the classic way this
+  // feature ships broken.
+  const syntax = rustyfi.diagnostics(`@require: stdja-mini
+document (|title = {t}; author = {a};|) '<
+  +p { hi }
+>>>
+`);
+  check("a syntax error yields exactly one diagnostic",
+    syntax.ok && syntax.diagnostics.length === 1,
+    syntax.ok ? JSON.stringify(syntax.diagnostics) : syntax.error);
+  if (syntax.ok && syntax.diagnostics.length === 1) {
+    const d = syntax.diagnostics[0];
+    check("the diagnostic has every field the page reads", shape(d), JSON.stringify(d));
+    check("the syntax error is on the line it is written on (zero-based 3)",
+      d.line === 3, `line ${d.line}`);
+    check("the syntax error has a non-empty range", d.endCharacter > d.character,
+      `${d.character}-${d.endCharacter}`);
+    check("the position is not repeated in the message", !/^line \d+, character/.test(d.message),
+      d.message);
+  }
+
+  // THE UTF-16 CHECK. A byte offset would put this marker 14 characters too
+  // far right — one extra position per Japanese character before it — and it
+  // would be wrong on exactly the documents this playground exists to show.
+  const cjkLine = "let s = `吾輩は猫である` in let y = nosuchvariable in";
+  const CJK = `@require: stdja-mini\n${cjkLine}\ndocument (|title = {t}; author = {a};|) '<\n  +p { hi }\n>\n`;
+  const cjk = rustyfi.diagnostics(CJK);
+  check("a CJK document analyses", cjk.ok && cjk.diagnostics.length === 1,
+    cjk.ok ? JSON.stringify(cjk.diagnostics) : cjk.error);
+  if (cjk.ok && cjk.diagnostics.length === 1) {
+    const d = cjk.diagnostics[0];
+    const want = cjkLine.indexOf("nosuchvariable");
+    check("a column after Japanese text is in UTF-16 units, not bytes",
+      d.line === 1 && d.character === want,
+      `got ${d.line}:${d.character}, want 1:${want} (byte offset would be ` +
+      `${Buffer.byteLength(cjkLine.slice(0, want), "utf8")})`);
+    // …and the range, sliced out of the JS string with those numbers, is the
+    // text the message is about. This is what the editor's underline covers.
+    check("the range slices out exactly the offending token",
+      CJK.split("\n")[d.line].slice(d.character, d.endCharacter) === "nosuchvariable",
+      JSON.stringify(CJK.split("\n")[d.line].slice(d.character, d.endCharacter)));
+    // The fixture has to be able to tell the two apart, or the check above
+    // passes for the wrong reason.
+    check("the CJK fixture really distinguishes bytes from UTF-16",
+      Buffer.byteLength(cjkLine.slice(0, want), "utf8") !== want);
+  }
+
+  // A failure with no place in THIS document — an unresolvable `@require:` —
+  // must not be pinned to a line, or the editor underlines an innocent one.
+  // Zero width is how that is said, and the page draws nothing for it.
+  const unplaced = rustyfi.diagnostics(CLEAN.replace("stdja-mini", "no-such-package"));
+  check("an unresolvable @require: is reported", unplaced.ok && unplaced.diagnostics.length === 1,
+    unplaced.ok ? JSON.stringify(unplaced.diagnostics) : unplaced.error);
+  if (unplaced.ok && unplaced.diagnostics.length === 1) {
+    const d = unplaced.diagnostics[0];
+    check("a diagnostic with nowhere to go has an empty range",
+      d.line === 0 && d.character === 0 && d.endCharacter === 0, JSON.stringify(d));
+    check("…and still names the package", d.message.includes("no-such-package"), d.message);
+  }
+
+  // The generation is respected: the same 0.1 source is clean as 0.1 and not
+  // as 0.0.6. Without this, `lang` could stop being threaded and every
+  // diagnostic would silently be about the wrong grammar.
+  const v01Doc =
+    "@require: v01-mini\n\nlet open V01Mini in\ndocument (| title = `v01` |) '<\n" +
+    "  +p { Hello from 0.1. }\n>\n";
+  const as01 = rustyfi.diagnostics(v01Doc, 1);
+  const as006 = rustyfi.diagnostics(v01Doc, 0);
+  check("a 0.1 document is clean when analysed as 0.1",
+    as01.ok && as01.diagnostics.length === 0,
+    as01.ok ? JSON.stringify(as01.diagnostics) : as01.error);
+  check("…and is not, analysed as 0.0.6",
+    as006.ok && as006.diagnostics.length === 1,
+    as006.ok ? JSON.stringify(as006.diagnostics) : as006.error);
+
+  // Analysis must not wedge the module. The page runs it unattended on a
+  // timer, so a document that killed the instance would take the whole page
+  // down without anyone pressing anything.
+  for (const nasty of ["", " ", "((((((((((((((((((((", "@require:", "\\", "{{{{{{{{"]) {
+    const out = rustyfi.diagnostics(nasty);
+    check(`analysing ${JSON.stringify(nasty.slice(0, 12))} does not trap`, !out.trapped,
+      out.trapped ? out.error : "");
+  }
+  const after = rustyfi.diagnostics(CLEAN);
+  check("the module still works after all of that",
+    after.ok && after.diagnostics.length === 0,
+    after.ok ? JSON.stringify(after.diagnostics) : after.error);
+  const stillTypesets = rustyfi.compile(HELLO);
+  check("…and still typesets", stillTypesets.ok, stillTypesets.ok ? "" : stillTypesets.error);
+
+  // Every example the page ships is clean under the ANALYSIS too, not only
+  // under a full typeset. The two differ (no rendering, no font), so an
+  // example that opens with a red underline would go unnoticed otherwise.
+  for (const example of EXAMPLES) {
+    const out = rustyfi.diagnostics(example.source, example.lang ?? 0);
+    check(
+      `example "${example.name}" analyses clean`,
+      out.ok && out.diagnostics.length === 0,
+      out.ok ? JSON.stringify(out.diagnostics).slice(0, 200) : out.error,
+    );
+  }
+}
+
 // A link a browser cannot decode must SAY so rather than load garbage.
 let refused = null;
 try {
