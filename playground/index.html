@@ -239,6 +239,26 @@ $("font").addEventListener("change", async (e) => {
   $("fontlabel").textContent = `Font: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
 });
 
+// Junicode is served beside the module so the page typesets properly on first
+// load: without a real face the built-in base-14 fonts cannot encode so much as
+// the em-dash `stdjabook` emits, and every example needing one would open
+// broken. Fetched rather than linked into the `.wasm` because it is a megabyte
+// the module would otherwise carry on every load, and because an uploaded font
+// has to override it anyway. A failure here is not fatal — the page still runs
+// on base-14, and says so.
+async function loadBundledFont() {
+  try {
+    const res = await fetch("./fonts/Junicode.ttf");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    fontBytes = new Uint8Array(await res.arrayBuffer());
+    $("fontlabel").textContent =
+      `Font: Junicode (bundled, ${(fontBytes.length / 1024 / 1024).toFixed(1)} MB) — or pick your own…`;
+  } catch (e) {
+    $("fontlabel").textContent =
+      "No bundled font (base-14 only) — pick one from your machine…";
+  }
+}
+
 function showError(message) {
   errorEl.textContent = message;
   errorEl.style.display = "block";
@@ -303,6 +323,8 @@ try {
   $("packages").innerHTML = packages.map((p) => `<code>${p}</code>`).join("");
   statusEl.textContent = `ready — ${packages.length} packages bundled`;
   compileBtn.disabled = false;
+  // Before the first typeset, so the opening render already has the font.
+  await loadBundledFont();
   typeset();
 } catch (e) {
   statusEl.textContent = "failed to load";
