@@ -314,13 +314,38 @@ pub struct Output {
     bytes: Vec<u8>,
 }
 
+/// Rewrite a diagnostic for someone typing into a textarea.
+///
+/// The typesetter's messages name real paths because it normally has a real
+/// filesystem. Here there is none: [`VIRTUAL_ROOT`] and [`ENTRY_PATH`] are
+/// inventions of this shim, so quoting them at a browser user names files that
+/// exist nowhere and cannot be inspected. Two rewrites, both purely
+/// presentational — the underlying error is unchanged:
+///
+/// * the entry path is dropped as a prefix, because there is only one document
+///   and the reader is looking straight at it;
+/// * a `@require:` failure's `searched:` list — ten virtual paths, one per
+///   layout the loader tries — collapses to the fact that actually helps,
+///   which is that the corpus is fixed and browsable via `rustyfi_packages`.
+fn for_a_reader(message: &str) -> String {
+    let message = message
+        .strip_prefix(&format!("{ENTRY_PATH}: "))
+        .unwrap_or(message);
+    match message.split_once("; searched: ") {
+        Some((head, _paths)) if head.contains("cannot resolve `@require:") => {
+            format!("{head} — the playground serves a fixed package set; see the list below the editor")
+        }
+        _ => message.replace(VIRTUAL_ROOT, ""),
+    }
+}
+
 impl Output {
     fn from_result(result: Result<Vec<u8>, String>) -> Self {
         match result {
             Ok(bytes) => Output { ok: true, bytes },
             Err(message) => Output {
                 ok: false,
-                bytes: message.into_bytes(),
+                bytes: for_a_reader(&message).into_bytes(),
             },
         }
     }
