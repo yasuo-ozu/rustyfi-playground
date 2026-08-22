@@ -34,11 +34,13 @@ playground/                 the page, its glue, and an offline self-test
 ## Getting a working checkout
 
 The submodule is not optional — `crates/rustyfi-wasm` path-depends on four
-crates inside it, and `build.rs` bakes two of that checkout's trees into the
-module as the corpus `@require:` resolves against: `lib-rustyfi/dist/packages/`
-(the frozen SATySFi 0.0.6 standard library) and a licence-cleared subset of
+crates inside it, and `build.rs` bakes three of that checkout's trees into the
+module as the corpora `@require:` resolves against: `lib-rustyfi/dist/packages/`
+(the frozen SATySFi 0.0.6 standard library), a licence-cleared subset of
 `layout-tests/corpus/` (third-party packages such as `easytable`, `xpath` and
-SlyDIFi).
+SlyDIFi), and `lib-rustyfi/dist-v01/packages/` (the SATySFi 0.1 standard
+library). Exactly one of the two generations is mounted per compile, chosen by
+the page's Lang selector.
 
 ```console
 $ git clone --recurse-submodules git@github.com:yasuo-ozu/rustyfi-playground.git

@@ -11,6 +11,14 @@
 // without a font and to succeed with one, and the self-test checks both
 // directions.
 //
+// `lang` is the SATySFi generation the source is written in — `0` for 0.0.6
+// and `1` for 0.1 — and is OMITTED wherever it is 0, which is the default and
+// what every example here predates. It is not decoration: the two generations
+// have different grammars and different bundled corpora, so compiling an entry
+// under the wrong one is a parse error rather than a subtly different render.
+// Choosing an example sets the header's Lang selector from this field; the
+// self-test compiles each entry under it.
+//
 // Every example after "Inline code" exercises one bundled third-party package
 // and is adapted from that package's own documentation, cited at the top of
 // each source.
@@ -620,6 +628,257 @@ page-break (UserDefinedPaper (pw, pw))
   (fun _ -> (| header-origin = (0pt, 0pt); header-content = block-nil;
                footer-origin = (0pt, 0pt); footer-content = block-nil; |))
   body
+`,
+  },
+
+  // ---------------------------------------------------------------------
+  // SATySFi 0.1 (the dev-0-1-0 / saphe-split line).
+  //
+  // A separate generation, not a dialect: different grammar, different
+  // bundled corpus, and the two do not mix here — the module mounts exactly
+  // one corpus per compile. Every entry below therefore carries `lang: 1`,
+  // and picking one moves the header's Lang selector with it.
+  // ---------------------------------------------------------------------
+
+  {
+    name: "0.1: A first document",
+    lang: 1,
+    needsFont: false,
+    source: `% SATySFi 0.1. Choose 0.1 in the Lang selector above — this document is a
+% parse error under 0.0.6, and every 0.0.6 example above is a parse error
+% under 0.1. Each generation has its own bundled package corpus, and
+% @require: resolves against exactly one of them.
+%
+% What is different from 0.0.6, all of it visible below:
+%
+%   - a package IS a module, so its bindings are reached qualified
+%     (V01Mini.document) or brought into scope with "let open M in" — note
+%     the leading "let", which 0.0.6's bare "open M in" did not have;
+%   - records separate their fields with a comma, not a semicolon;
+%   - math is split in two. \${...} is math-TEXT, the unevaluated source, and
+%     read-math turns it into math-BOXES; that is why V01Mini declares its
+%     fraction as "val math ctx \\frac numer denom" and reads each argument
+%     explicitly rather than receiving boxes.
+
+@require: v01-mini
+
+let open V01Mini in
+document (| title = \`A first document\` |) '<
+  +p {
+    Typeset in your browser by the same Rust code the command-line rustyfi
+    runs, read with the SATySFi 0.1 grammar rather than 0.0.6's.
+  }
+  +p {
+    Inline commands are module members too: \\emph{emphasised} and
+    \\bold{bold} are both val inline bindings inside V01Mini, in scope
+    without a prefix because of the let open above.
+  }
+  +p {
+    Math comes through that same split: \${a^2 + b^2 = c^2}, a fraction
+    \${\\frac{1}{x + 1}}, and a limit \${\\lim_{n} a_n = L}.
+  }
+>
+`,
+  },
+  {
+    name: "0.1: Modules and sealing",
+    lang: 1,
+    needsFont: false,
+    source: `% The headline difference from 0.0.6: a package is a real module, and a
+% module can be SEALED. The bundled V01Sealed is declared
+%
+%   module V01Sealed :> sig
+%     type t :: o
+%     val make : int -> t
+%     val get : t -> int
+%     val \\show : inline [t]
+%   end = struct ... end
+%
+% The sealing sigil is :>, never 0.0.6's "module M : sig ... end" — that
+% spelling is a parse error in 0.1. "type t :: o" declares t OPAQUE, so its
+% real definition (a one-constructor variant) does not escape: the
+% constructor is deregistered at the seal point, and make/get/\\show are the
+% only way to build, read or print one from out here.
+
+@require: v01-mini
+@require: v01-sealed
+
+let open V01Mini in
+
+let boxed = V01Sealed.make 41 in
+let answer = embed-string (arabic (V01Sealed.get boxed + 1)) in
+
+% V01Mini is UNSEALED, so let open puts all of it in scope at once: a
+% val rec, a user-defined operator, and a variant with its constructors.
+let total = embed-string (arabic (sum-list [1, 2, 3, 4])) in
+let label =
+  match Known 7 with
+  | Known n -> embed-string (arabic (n +++ 0))
+  | Unknown -> embed-string \`unknown\`
+  end
+in
+
+document (| title = \`Modules and sealing\` |) '<
+  +p {
+    Reading a sealed value back and adding one gives #answer;. Nothing out
+    here can look inside it: only the three members the signature exports.
+  }
+  +p {
+    A qualified inline command runs the module's own code:
+    \\V01Sealed.show(V01Sealed.make 7);
+  }
+  +p {
+    And from the opened V01Mini: its recursive sum is #total;, and its
+    user-defined operator, applied inside a match on its own variant,
+    gives #label;.
+  }
+>
+`,
+  },
+  {
+    name: "0.1: Multi-stage (quote and splice)",
+    lang: 1,
+    needsFont: false,
+    source: `% Multi-stage evaluation. "&e" QUOTES an expression — its value is code, to
+% be run one stage later — and "~e" SPLICES in the result of a computation
+% from the stage before.
+%
+% A document is stage 1, so a bare quote here is refused outright:
+%
+%   let c = &(1) in ...
+%   -> \`&\` (next-stage quote) is only valid at stage 0, but this is stage 1
+%
+% The way in is a splice, because a splice reads its OPERAND one stage
+% earlier. Everything inside the two "~( ... )" below therefore runs before
+% the document does, and every "&" inside those builds a piece of the
+% program the document will actually run.
+%
+% One part of the 0.1 staging surface CANNOT appear here. 0.1 replaced
+% 0.0.6's whole-file "@stage:" header with a per-binding qualifier,
+% "val ~x" and "val persistent ~x" — but those are LIBRARY bindings, and 0.1
+% has neither an expression-level module nor a staged "let", so a
+% single-file document has nowhere to put one. The playground compiles
+% exactly one file, so they are out of reach here rather than unsupported;
+% rustyfi's crates/rustyfi-lang/tests/staging_v1.rs exercises them.
+
+@require: v01-mini
+
+% Stage-0 recursion that BUILDS code rather than computing a number: each
+% step quotes a multiplication whose right operand is spliced in from the
+% step before, so what reaches the document is 3 * (3 * (3 * 1)) as an
+% expression — unrolled at stage 0, run at stage 1.
+let cube =
+  ~(
+    let rec pow n = if n <= 0 then &(1) else &( 3 * ~(pow (n - 1)) ) in
+    pow 3
+  )
+in
+
+% "code int" is 0.1's type for a quoted int. 0.0.6 has no spelling for it at
+% all — deliberately, matching upstream — so this annotation is 0.1-only.
+% It types the parameter of a stage-0 function that duplicates whatever code
+% it is handed, without ever running it.
+let doubled =
+  ~(
+    let twice (c : code int) = &( ~c + ~c ) in
+    twice (&(21))
+  )
+in
+
+let a = embed-string (arabic cube) in
+let b = embed-string (arabic doubled) in
+
+let open V01Mini in
+document (| title = \`Multi-stage\` |) '<
+  +p {
+    The unrolled power gives #a;, and the duplicating macro gives #b;.
+  }
+  +p {
+    Neither number was computed by this document. Both arrived as code
+    assembled one stage earlier, and all the document did was run it.
+  }
+>
+`,
+  },
+  {
+    name: "0.1: Lists (itemize)",
+    lang: 1,
+    needsFont: false,
+    source: `% itemize is one of the real upstream 0.1 packages bundled here
+% (dist-v01/packages/itemize.satyh). Two things about the call are pure 0.1
+% surface:
+%
+%   - the list is a VALUE, not a block-text tree — Item(text, children),
+%     nested by nesting the constructor;
+%   - the optional argument is a LABELLED BUNDLE, ?(break = true). 0.1
+%     dropped 0.0.6's fused ?: sigil entirely, so an optional argument is
+%     named at the call site instead of being positional.
+%
+% The outermost Item's own text is a conventional throwaway: itemize's
+% listing and enumerate both match Item(_, items) and discard it.
+
+@require: v01-mini
+@require: itemize
+
+let open V01Mini in
+document (| title = \`Lists\` |) '<
+  +p { Before the list. }
+  +Itemize.listing?(break = true)(Item({}, [
+    Item({a bulleted item}, []),
+    Item({another, with children}, [
+      Item({nested one level}, []),
+      Item({and a sibling}, []),
+    ]),
+  ]));
+  +p { A numbered list is the same shape, through a different member: }
+  +Itemize.enumerate(Item({}, [
+    Item({first entry}, []),
+    Item({second entry}, []),
+  ]));
+  +p { After the list. }
+>
+`,
+  },
+  {
+    name: "0.1: The std-ja class (needs a font)",
+    lang: 1,
+    needsFont: true,
+    source: `% std-ja is the real upstream SATySFi 0.1 document class
+% (dist-v01/packages/std-ja.satyh), driving the whole pipeline: loader,
+% lowering, sealing, evaluation, line breaking, page breaking, PDF.
+%
+% Like the 0.0.6 stdja family it renders its own title block, numbered
+% sections and running page furniture — and that furniture contains an em
+% dash, which the base-14 fonts cannot encode. Supply a font with the picker
+% above; without one it fails with an honest encoding error rather than
+% dropping the character.
+%
+% Note the shape of the call. The class is a module, so the document
+% envelope is StdJa.document and every block command is +StdJa.something —
+% there is no bare +p here, because nothing was opened.
+
+@require: std-ja
+
+StdJa.document (|
+  title  = {A 0.1 document class},
+  author = {rustyfi},
+|) '<
+  +StdJa.p {
+    This is upstream's own 0.1 class, vendored into the WebAssembly module
+    and rendered end to end by the Rust port.
+  }
+  +StdJa.section{Introduction}<
+    +StdJa.p {
+      Sections are numbered and set by the class itself, from a sealed
+      module with optional-argument rows and closed record types.
+    }
+  >
+  +StdJa.section{Conclusion}<
+    +StdJa.p {
+      The quick brown fox jumps over the lazy dog.
+    }
+  >
+>
 `,
   },
 ];

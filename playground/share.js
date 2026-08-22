@@ -129,11 +129,24 @@ export async function decodeSource(param) {
 
 /// `here` with its query replaced by the shared document. Any existing query
 /// or fragment is dropped: the link means "open this document", nothing else.
-export function shareUrl(here, param) {
+///
+/// `lang` travels beside the source because the two generations have different
+/// grammars: a 0.1 document opened as 0.0.6 is a parse error, so a link that
+/// carried only the text would reliably arrive broken. It is emitted ONLY for
+/// 0.1 — 0.0.6 is the default at both ends, so every link that worked before
+/// is still byte-identical.
+export function shareUrl(here, param, lang = 0) {
   const url = new URL(here);
   url.hash = "";
-  url.search = `?src=${param}`;
+  url.search = lang === 1 ? `?src=${param}&lang=1` : `?src=${param}`;
   return url.toString();
+}
+
+/// The generation a share link asks for: `1` only when it says so, and `0`
+/// (0.0.6, the default) for anything else, including a link from before the
+/// parameter existed and a link carrying rubbish.
+export function shareLang(search) {
+  return new URLSearchParams(search).get("lang") === "1" ? 1 : 0;
 }
 
 /// Ask each shortener in turn for a short URL.

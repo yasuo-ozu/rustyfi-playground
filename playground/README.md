@@ -70,6 +70,16 @@ literals, so every SATySFi `\` is written `\\`, every backtick `` \` `` and
 every `${` `\${`. Getting that wrong is silent, which is why the self-test
 compiles all of them.
 
+Each entry also carries the generation it is written in — `lang: 1` for
+SATySFi 0.1, omitted for 0.0.6, which is the default. Choosing an example moves
+the header's Lang selector to match; moving the selector by hand never rewrites
+the editor, because the selector says how to read what is there rather than
+what should be there. The self-test compiles each example under its own `lang`,
+and separately checks that every 0.1 entry really does *fail* as 0.0.6 — the
+only way to catch a `lang` that has stopped being threaded anywhere. A share
+link carries the generation too, as `&lang=1`, emitted only for 0.1 so that
+every 0.0.6 link ever minted still means what it did.
+
 ## Limitations worth knowing before you file a bug
 
 These are properties of a browser build, not of the typesetter:
@@ -92,8 +102,22 @@ These are properties of a browser build, not of the typesetter:
   nothing to read. `load-pdf-image` is not compiled in at all (its reader pulls
   in `rayon` and `getrandom`, neither of which builds for
   `wasm32-unknown-unknown`) and says so if called.
-- **SATySFi 0.0.6 only.** The 0.1 `use`-header dialect resolves envelopes and a
-  deps config from disk.
+- **One file, which must be a document.** Whichever generation is selected, the
+  editor holds the entry and everything else comes from the baked-in corpus.
+  Under 0.1 that is a real restriction rather than a cosmetic one: a module is
+  a *file*, so the surface that only exists at the top of a library — `module M
+  :> sig … end = struct … end`, and with it the per-binding stage qualifiers
+  `val ~x` and `val persistent ~x` — has nowhere to go. 0.1 has neither an
+  expression-level module nor a staged `let`, so those are out of reach here.
+  Everything else about staging is not: `&e` and `~e` work in the document
+  body, and so does the `code τ` type (`fun (c : code int) -> …` inside a
+  splice), which is what the "0.1: Multi-stage" example does. A library source
+  pasted in is refused clearly — *entry file must be a document (with an
+  `in …` body), found a library*.
+- **The two generations never mix.** Exactly one corpus is mounted per compile,
+  chosen by the Lang selector, so the cross-version bridge — a 0.1 document
+  `@require:`-ing a 0.0.6 package — is not reachable from here. That needs both
+  corpora on one lib root, which is a different and much larger build.
 - **A fixed 32 MiB stack** (`.cargo/config.toml`), because elaboration and
   typechecking recurse over the merged program. A deep enough document traps;
   the page reports it and a reload gives a fresh module.

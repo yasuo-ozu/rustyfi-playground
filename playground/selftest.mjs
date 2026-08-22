@@ -10,7 +10,7 @@
 import { readFile } from "node:fs/promises";
 import { instantiate } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
-import { decodeSource, encodeSource, shareUrl, SHORTENERS } from "./share.js";
+import { decodeSource, encodeSource, shareLang, shareUrl, SHORTENERS } from "./share.js";
 import { PACKAGE_SETS, PACKAGE_SETS_V01, groupPackages, setsFor } from "./packages.js";
 
 const wasmPath = process.argv[2];
@@ -188,6 +188,14 @@ if (!nonLatin.ok) {
 //    rather than failed otherwise: CI runners vary, and this must not be the
 //    reason a deploy is blocked.
 const fontCandidates = [
+  // Junicode first: it is the face the page itself loads on startup, so the
+  // `needsFont` examples get checked against the font a visitor will actually
+  // have. Two locations because the deploy fetches it into the submodule and
+  // copies it beside the page; a local preview may have either or neither.
+  // Resolved against this MODULE rather than the working directory, since the
+  // deploy runs `node playground/selftest.mjs` from the repository root.
+  new URL("./fonts/Junicode.ttf", import.meta.url),
+  new URL("../rustyfi/lib-rustyfi/dist/fonts/Junicode.ttf", import.meta.url),
   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
   "/usr/share/fonts/dejavu/DejaVuSans.ttf",
   "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -222,8 +230,14 @@ if (fontBytes === null) {
 
 // 8. Every example the page actually ships. A broken example is worse than no
 //    example, and this is the only way to know without opening a browser.
+//
+//    Each is compiled under ITS OWN generation (`example.lang`, defaulting to
+//    0.0.6). Compiling everything as 0.0.6 — which is what this loop used to
+//    do — would fail every 0.1 example on a parse error, and, worse, a 0.1
+//    example that regressed into being valid 0.0.6 would pass silently.
 for (const example of EXAMPLES) {
-  const out = rustyfi.compile(example.source);
+  const lang = example.lang ?? 0;
+  const out = rustyfi.compile(example.source, null, lang);
   if (example.needsFont) {
     // Expected to fail WITHOUT a font, for the stated reason — if it ever
     // starts succeeding, the label on the page has become a lie.
@@ -233,18 +247,39 @@ for (const example of EXAMPLES) {
       out.ok ? "it compiled; drop the needsFont label" : out.error.split("\n")[0],
     );
     if (fontBytes !== null) {
-      const withFont = rustyfi.compile(example.source, fontBytes);
+      const withFont = rustyfi.compile(example.source, fontBytes, lang);
       check(
         `example "${example.name}" succeeds with a font`,
         withFont.ok,
         withFont.ok ? "" : withFont.error.split("\n")[0],
       );
+      if (withFont.ok) console.log(`     ${withFont.pdf.length} bytes of PDF (with a font)`);
     }
   } else {
     check(
       `example "${example.name}" compiles`,
       out.ok,
       out.ok ? "" : out.error.split("\n")[0],
+    );
+    if (out.ok) console.log(`     ${out.pdf.length} bytes of PDF`);
+  }
+}
+
+// …and the generations are really being told apart. Two ways this could rot
+// without any example visibly breaking: the 0.1 entries could all quietly
+// disappear, or `lang` could stop being threaded and every example compile as
+// 0.0.6 anyway. The second is only detectable by checking that a 0.1 example
+// FAILS under 0.0.6 — which every one of them must, the grammars being
+// different — so that is what is checked.
+{
+  const v01 = EXAMPLES.filter((e) => (e.lang ?? 0) === 1);
+  check("the page ships 0.1 examples", v01.length > 0, "no example carries lang: 1");
+  for (const example of v01) {
+    const wrong = rustyfi.compile(example.source, fontBytes, 0);
+    check(
+      `example "${example.name}" is really 0.1-only`,
+      !wrong.ok,
+      "it compiled as 0.0.6 too, so `lang` is not selecting anything",
     );
   }
 }
@@ -313,6 +348,23 @@ for (const [name, text] of shareCases) {
   check(`share survives the query string: ${name}`,
     new URL(url).searchParams.get("src") === param);
 }
+// The generation travels with the document. Without it a shared 0.1 example
+// opens as 0.0.6 and greets the reader with a parse error, which is exactly the
+// failure a share link exists to avoid.
+{
+  const base = "https://example.invalid/rustyfi-playground/";
+  const v01 = shareUrl(base, "1abc", 1);
+  check("a 0.1 share link says so", shareLang(new URL(v01).search) === 1, v01);
+  check("the source survives beside it", new URL(v01).searchParams.get("src") === "1abc", v01);
+  // 0.0.6 is the default at both ends, so its links must be UNCHANGED — a
+  // `&lang=0` here would break every link already in the wild the moment
+  // anything started reading the parameter strictly.
+  const v006 = shareUrl(base, "1abc", 0);
+  check("a 0.0.6 share link is unchanged", v006 === shareUrl(base, "1abc"), v006);
+  check("a link without the parameter means 0.0.6", shareLang(new URL(v006).search) === 0, v006);
+  check("rubbish in the parameter means 0.0.6", shareLang("?src=1abc&lang=banana") === 0);
+}
+
 // A link a browser cannot decode must SAY so rather than load garbage.
 let refused = null;
 try {

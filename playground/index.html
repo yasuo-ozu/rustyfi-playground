@@ -251,7 +251,7 @@
 <script type="module">
 import { instantiateFromUrl } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
-import { decodeSource, encodeSource, shareUrl, shorten, SHORTENER_MAX_URL } from "./share.js";
+import { decodeSource, encodeSource, shareUrl, shareLang, shorten, SHORTENER_MAX_URL } from "./share.js";
 import { groupPackages } from "./packages.js";
 
 const $ = (id) => document.getElementById(id);
@@ -367,7 +367,11 @@ function showToast(message, { url = "", note = "", ok = false } = {}) {
 async function share() {
   shareBtn.disabled = true;
   try {
-    const long = shareUrl(window.location.href, await encodeSource(sourceEl.value));
+    const long = shareUrl(
+      window.location.href,
+      await encodeSource(sourceEl.value),
+      currentLang(),
+    );
     // `shorten` returns null only when EVERY configured shortener declines or is
     // unreachable. Which link the user actually got has to be SAID: silently
     // handing over a long one after they asked for a short one is the failure
@@ -396,6 +400,17 @@ async function share() {
   }
 }
 
+/// Point the Lang selector at a generation, keeping the packages panel in
+/// step. Setting `.value` does not fire `change`, so this never re-enters the
+/// selector's own handler below — the two only ever run one at a time.
+function selectLang(lang) {
+  const wanted = String(lang === 1 ? 1 : 0);
+  if (langEl.value === wanted) return;
+  langEl.value = wanted;
+  // Null until the module finishes loading, which is after this first runs.
+  if (rustyfi) refreshPackages();
+}
+
 // Examples first, so the page is readable even if the module fails to load.
 for (const [i, ex] of EXAMPLES.entries()) {
   const option = document.createElement("option");
@@ -407,9 +422,24 @@ for (const [i, ex] of EXAMPLES.entries()) {
 // another example and coming back restores it instead of indexing EXAMPLES
 // with a NaN.
 let sharedSource = null;
+let sharedLang = 0;
 $("example").addEventListener("change", (e) => {
   const chosen = EXAMPLES[Number(e.target.value)];
   sourceEl.value = chosen ? chosen.source : sharedSource;
+  // An example knows which generation it is written in, and the two grammars
+  // are not compatible, so loading a 0.1 example without moving the selector
+  // would leave a document on screen that cannot compile as selected.
+  //
+  // The converse is deliberately NOT done. Choosing an example replaces the
+  // editor, so moving the selector with it is part of that replacement; the
+  // selector on its own says how to READ what is in the editor, and the
+  // editor's contents belong to whoever typed them. So switching Lang by hand
+  // after loading a 0.1 example leaves the 0.1 source exactly where it is and
+  // simply compiles it as 0.0.6 — which fails, with the parse error naming the
+  // line. Rewriting the user's document to match the switch, or refusing the
+  // switch, would both be worse: the first discards their work, the second
+  // makes it impossible to see what the other generation makes of a document.
+  selectLang(chosen ? chosen.lang ?? 0 : sharedLang);
 });
 
 // A shared document wins over the default example, and takes the picker with
@@ -420,7 +450,11 @@ let sharedError = null;
 if (shared) {
   try {
     sharedSource = await decodeSource(shared);
+    // The link carries its generation too, defaulting to 0.0.6 — a 0.1
+    // document opened as 0.0.6 would arrive as a parse error.
+    sharedLang = shareLang(window.location.search);
     sourceEl.value = sharedSource;
+    selectLang(sharedLang);
     const option = document.createElement("option");
     option.value = "shared";
     option.textContent = "Shared document";
@@ -429,9 +463,11 @@ if (shared) {
   } catch (e) {
     sharedError = e && e.message ? e.message : String(e);
     sourceEl.value = EXAMPLES[0].source;
+    selectLang(EXAMPLES[0].lang ?? 0);
   }
 } else {
   sourceEl.value = EXAMPLES[0].source;
+  selectLang(EXAMPLES[0].lang ?? 0);
 }
 
 $("font").addEventListener("change", async (e) => {
@@ -525,6 +561,8 @@ function refreshPackages() {
   return names;
 }
 
+// Switching by hand re-reads the corpus and says so, and touches nothing else
+// — in particular not the editor. See the example picker's handler for why.
 langEl.addEventListener("change", () => {
   if (!rustyfi) return;
   const names = refreshPackages();
