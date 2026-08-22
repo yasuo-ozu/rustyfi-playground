@@ -152,6 +152,37 @@ fn main() {
     }
     out.push_str("];\n");
 
+    // The 0.1 corpus, mounted under `dist-v01/packages` rather than
+    // `dist/packages`. It is a SEPARATE table because the two generations are
+    // different vocabularies, not two halves of one set: many names exist in
+    // both (`itemize`, `list`, `code`) with genuinely different APIs, and the
+    // loader picks by the document's own generation. Merging them into one
+    // table would make the duplicate check below fire on exactly those names.
+    let mut v01 = Vec::new();
+    collect(
+        &submodule.join("lib-rustyfi").join("dist-v01").join("packages"),
+        "",
+        &mut v01,
+    );
+    v01.sort();
+    let dup_v01 = v01.windows(2).find(|w| w[0].0 == w[1].0);
+    assert!(
+        dup_v01.is_none(),
+        "two bundled 0.1 files claim the same `@require:` name: {dup_v01:?}"
+    );
+    out.push_str(
+        "\n/// The same, for the SATySFi 0.1 corpus, mounted under\n\
+         /// `dist-v01/packages`.\n\
+         pub(crate) static CORPUS_V01: &[(&str, &str)] = &[\n",
+    );
+    for (name, path) in &v01 {
+        let full = path
+            .to_str()
+            .unwrap_or_else(|| panic!("corpus path is not UTF-8: {}", path.display()));
+        writeln!(out, "    ({name:?}, include_str!({full:?})),").expect("writing to a String");
+    }
+    out.push_str("];\n");
+
     let dest = Path::new(&std::env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("corpus.rs");
     std::fs::write(&dest, out).unwrap_or_else(|e| panic!("cannot write {}: {e}", dest.display()));
 }

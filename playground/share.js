@@ -31,20 +31,31 @@ export const PLAIN = "0";
 ///   identically to a 2,703-character one, so it is not a length limit, a rate
 ///   limit or a CORS problem. Kept last because it has worked before and
 ///   trying it costs a request only after the others have declined.
-/// - **TinyURL is deliberately absent.** Its keyless `api-create.php` is the
-///   LEGACY endpoint, and links minted through it can serve a "created using a
-///   deprecated API end point" interstitial instead of redirecting — so it
-///   returns a short URL that does not work, which is strictly worse than
-///   declining to shorten. Its current API needs a Bearer token, and this page
-///   is static and public, so any token shipped in it would be published with
-///   it. There is no usable TinyURL route from here.
+/// - **TinyURL is first by request.** Its keyless `api-create.php` is the
+///   LEGACY endpoint and has been seen to serve a "created using a deprecated
+///   API end point" interstitial instead of redirecting. That is not
+///   reproducible on demand — every link minted here answers 301 with the
+///   right `location`, browser headers included — so it appears intermittent
+///   rather than universal. Its current API would avoid the question but needs
+///   a Bearer token, and this page is static and public, so a token shipped in
+///   it would be published with it. The two providers below stay as fallbacks
+///   precisely because of the interstitial: if TinyURL declines, a link still
+///   gets made.
 export const SHORTENERS = [
   {
+    id: "tinyurl.com",
+    // Plain text: the short URL on success, a body containing "Error"
+    // otherwise. No length limit is documented; 8000 is the practical ceiling
+    // for a URL that still has to survive being pasted around.
+    maxUrl: 8000,
+    endpoint: (u) => `https://tinyurl.com/api-create.php?url=${encodeURIComponent(u)}`,
+    parse: (body) => (body.trim().startsWith("https://") ? body.trim() : null),
+  },
+  {
     id: "da.gd",
-    // Plain text, no key, and `access-control-allow-origin: *`. First because
-    // it is the only one of the three that is both keyless BY DESIGN and
-    // currently answering: TinyURL's keyless endpoint is its LEGACY one, and
-    // is.gd is refusing everything.
+    // Plain text, no key, and `access-control-allow-origin: *`. The first
+    // fallback because it is keyless BY DESIGN rather than by legacy, and was
+    // answering when is.gd was not.
     maxUrl: 8000,
     endpoint: (u) => `https://da.gd/shorten?url=${encodeURIComponent(u)}`,
     parse: (body) => (body.trim().startsWith("https://") ? body.trim() : null),

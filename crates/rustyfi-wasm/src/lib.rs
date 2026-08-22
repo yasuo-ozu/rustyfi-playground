@@ -78,6 +78,39 @@ const ENTRY_PATH: &str = "/rustyfi/doc/main.saty";
 /// Every path is absolute and unique by construction (they are all built by
 /// joining onto [`VIRTUAL_ROOT`]), so canonicalization is LEXICAL — see
 /// [`SourceProvider::canonicalize`] for why that is enough.
+/// Which SATySFi generation to compile as.
+///
+/// The playground compiles one or the other, never a mixture: the
+/// cross-version bridge needs both corpora on the lib root at once, which is a
+/// different (and much larger) build than this one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Lang {
+    /// SATySFi 0.0.6, the default.
+    #[default]
+    V0_0,
+    /// SATySFi 0.1 (`dev-0-1-0`).
+    V0_1,
+}
+
+impl Lang {
+    /// `0` is 0.0.6 and `1` is 0.1; anything else is 0.0.6, so a caller that
+    /// passes rubbish gets the default rather than a trap.
+    pub fn from_u32(v: u32) -> Self {
+        if v == 1 {
+            Lang::V0_1
+        } else {
+            Lang::V0_0
+        }
+    }
+
+    fn to_version(self) -> rustyfi_syntax::RustyfiVersion {
+        match self {
+            Lang::V0_0 => rustyfi_syntax::RustyfiVersion::V0_0,
+            Lang::V0_1 => rustyfi_syntax::RustyfiVersion::V0_1,
+        }
+    }
+}
+
 pub struct EmbeddedCorpus {
     files: BTreeMap<PathBuf, &'static str>,
     /// The entry document. Owned rather than `&'static` because it arrives at
@@ -88,9 +121,24 @@ pub struct EmbeddedCorpus {
 impl EmbeddedCorpus {
     /// The corpus, with `source` mounted as the entry document.
     pub fn new(source: &str) -> Self {
-        let packages = Path::new(VIRTUAL_ROOT).join("dist").join("packages");
+        Self::for_lang(source, Lang::V0_0)
+    }
+
+    /// The corpus for one generation.
+    ///
+    /// Only one is mounted, not both: the two vocabularies share names
+    /// (`itemize`, `list`, `code`) with different APIs, and `@require:` is
+    /// resolved against the root the document's own generation names. Mounting
+    /// both and letting the loader's cross-generation fallback pick would make
+    /// a 0.1 document silently compile against a 0.0.6 package.
+    pub fn for_lang(source: &str, lang: Lang) -> Self {
+        let (dist, table) = match lang {
+            Lang::V0_0 => ("dist", CORPUS),
+            Lang::V0_1 => ("dist-v01", CORPUS_V01),
+        };
+        let packages = Path::new(VIRTUAL_ROOT).join(dist).join("packages");
         EmbeddedCorpus {
-            files: CORPUS
+            files: table
                 .iter()
                 .map(|(name, text)| {
                     // `build.rs` spells a nested package `easytable/matrix.satyg`
@@ -189,7 +237,16 @@ impl SourceProvider for EmbeddedCorpus {
 /// A nested package keeps its prefix, because that prefix is part of the name:
 /// `easytable/easytable`, `base/typeset/base`.
 pub fn package_names() -> Vec<&'static str> {
-    let mut names: Vec<&'static str> = CORPUS
+    package_names_for(Lang::V0_0)
+}
+
+/// [`package_names`], for one generation.
+pub fn package_names_for(lang: Lang) -> Vec<&'static str> {
+    let table = match lang {
+        Lang::V0_0 => CORPUS,
+        Lang::V0_1 => CORPUS_V01,
+    };
+    let mut names: Vec<&'static str> = table
         .iter()
         .map(|(name, _)| {
             name.rsplit_once('.')
@@ -227,7 +284,16 @@ pub fn compile(source: &str) -> Result<Vec<u8>, String> {
 /// not a refinement, it is what makes most real documents work — and doing it
 /// from the caller's own file keeps a multi-megabyte face out of the page load.
 pub fn compile_with_font(source: &str, font: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
-    let corpus = EmbeddedCorpus::new(source);
+    compile_with_font_lang(source, font, Lang::V0_0)
+}
+
+/// [`compile_with_font`], for a chosen generation.
+pub fn compile_with_font_lang(
+    source: &str,
+    font: Option<Vec<u8>>,
+    lang: Lang,
+) -> Result<Vec<u8>, String> {
+    let corpus = EmbeddedCorpus::for_lang(source, lang);
     let entry = corpus.entry_path().to_path_buf();
 
     let program = rustyfi_loader::load(
@@ -235,16 +301,11 @@ pub fn compile_with_font(source: &str, font: Option<Vec<u8>>) -> Result<Vec<u8>,
         &LoadOptions {
             lib_root: Some(PathBuf::from(VIRTUAL_ROOT)),
             sources: Some(Box::new(corpus)),
+            version: lang.to_version(),
             ..Default::default()
         },
     )
     .map_err(|e| e.to_string())?;
-
-    // The 0.0.6 flat-prelude merge, mirroring the CLI's own `merge_program`
-    // (`crates/rustyfi/src/main.rs`). The cross-version and 0.1 arms it also
-    // carries are unreachable here: the bundled corpus is 0.0.6 only, so no
-    // file can come back as `LoadedCst::V0_1`.
-    let (merged, stages) = merge_program(program)?;
 
     let store = font
         .map(|bytes| {
@@ -259,9 +320,21 @@ pub fn compile_with_font(source: &str, font: Option<Vec<u8>>) -> Result<Vec<u8>,
     };
 
     let mut aux = rustyfi_lang::crossref::AuxTable::new();
-    let doc = rustyfi_lang::compile_document_cst_with_stages(&merged, metrics, &mut aux, &stages)
-        .map_err(|e| e.to_string())?
-        .0;
+    // Mirrors the CLI's own dispatch: 0.1 libraries are modules, not
+    // prelude-concatenable flat binding lists, so they never go through
+    // `merge_program`. The CLI's third arm — a 0.0.6 root with a foreign 0.1
+    // dependency — cannot arise here, because exactly one corpus is mounted.
+    let doc = match lang {
+        Lang::V0_1 => rustyfi_lang::compile_document_v1_with_aux(&program.files, metrics, &mut aux)
+            .map_err(|e| e.to_string())?
+            .0,
+        Lang::V0_0 => {
+            let (merged, stages) = merge_program(program)?;
+            rustyfi_lang::compile_document_cst_with_stages(&merged, metrics, &mut aux, &stages)
+                .map_err(|e| e.to_string())?
+                .0
+        }
+    };
 
     match &store {
         // A real face means CID/TrueType embedding, which is also the only
@@ -491,6 +564,45 @@ pub unsafe extern "C" fn rustyfi_compile_with_font(
     Output::from_result(result).into_raw()
 }
 
+/// [`rustyfi_compile_with_font`], additionally choosing the SATySFi
+/// generation: `lang == 1` is 0.1, anything else is 0.0.6.
+///
+/// # Safety
+/// As [`rustyfi_compile_with_font`].
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_compile_with_font_lang(
+    src: *const u8,
+    len: usize,
+    font: *const u8,
+    font_len: usize,
+    lang: u32,
+) -> *mut Output {
+    let bytes: &[u8] = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src, len) }
+    };
+    let font: Option<Vec<u8>> = if font.is_null() || font_len == 0 {
+        None
+    } else {
+        Some(unsafe { std::slice::from_raw_parts(font, font_len) }.to_vec())
+    };
+    let result = match std::str::from_utf8(bytes) {
+        Ok(source) => compile_with_font_lang(source, font, Lang::from_u32(lang)),
+        Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
+    };
+    Output::from_result(result).into_raw()
+}
+
+/// The bundled package names for one generation, newline-separated.
+///
+/// `lang == 1` is 0.1, anything else 0.0.6.
+#[no_mangle]
+pub extern "C" fn rustyfi_packages_lang(lang: u32) -> *mut Output {
+    let names = package_names_for(Lang::from_u32(lang));
+    Output::from_result(Ok(names.join("\n").into_bytes())).into_raw()
+}
+
 /// The bundled package names, newline-separated, as a successful [`Output`] —
 /// what a document may `@require:`.
 #[no_mangle]
@@ -558,6 +670,30 @@ pub unsafe extern "C" fn rustyfi_output_free(out: *mut Output) {
 
 #[cfg(test)]
 mod tests {
+    /// The 0.1 corpus is mounted and compiles. Without this the `Lang` switch
+    /// is untested plumbing: the 0.0.6 path would keep passing while selecting
+    /// 0.1 failed for everyone.
+    #[test]
+    fn a_v01_document_compiles_against_the_bundled_v01_corpus() {
+        let src = "@require: v01-mini\n\nlet open V01Mini in\ndocument (| title = `v01` |) '<\n  +p { Hello from 0.1. }\n>\n";
+        let pdf = compile_with_font_lang(src, None, Lang::V0_1)
+            .unwrap_or_else(|e| panic!("a 0.1 document should compile: {e}"));
+        assert!(pdf.starts_with(b"%PDF-"), "not a PDF");
+    }
+
+    /// The two corpora are genuinely different sets, not one table read twice.
+    #[test]
+    fn each_generation_lists_its_own_packages() {
+        let v0 = package_names_for(Lang::V0_0);
+        let v1 = package_names_for(Lang::V0_1);
+        assert!(!v0.is_empty() && !v1.is_empty());
+        assert_ne!(v0, v1, "the two generations must not list the same set");
+        assert!(
+            v1.contains(&"v01-mini"),
+            "the 0.1 list should carry a 0.1-only package: {v1:?}"
+        );
+    }
+
     use super::*;
 
     /// Uses only `stdja-mini`, the smallest bundled document class.

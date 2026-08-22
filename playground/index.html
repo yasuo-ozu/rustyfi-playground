@@ -196,6 +196,14 @@
     <span id="fontlabel">Loading font…</span>
   </label>
 
+  <label class="ctl" title="Which SATySFi generation to compile as. Each has its own package corpus.">
+    Lang
+    <select id="lang">
+      <option value="0" selected>0.0.6</option>
+      <option value="1">0.1</option>
+    </select>
+  </label>
+
   <details class="pop" id="pkgs">
     <summary>Packages <span class="n" id="pkgcount"></span></summary>
     <div class="popbody">
@@ -254,6 +262,10 @@ const previewEl = $("preview");
 const placeholderEl = $("placeholder");
 const compileBtn = $("compile");
 const shareBtn = $("share");
+const langEl = $("lang");
+
+/// `0` for SATySFi 0.0.6, `1` for 0.1 — the wire value the module expects.
+const currentLang = () => Number(langEl.value) || 0;
 const toastEl = $("toast");
 const SHORTENED_BY = "Shortened by a third-party service, which received this link.";
 
@@ -275,8 +287,8 @@ const chipList = (names) => {
   return chips;
 };
 
-function renderPackages(names) {
-  const { groups, drift } = groupPackages(names);
+function renderPackages(names, lang) {
+  const { groups, drift } = groupPackages(names, lang);
   const sections = groups.map(({ set, members }) => {
     const head = el("h3", {}, el("a", { href: set.repo, textContent: set.name }));
     head.append(el("span", { className: "ver", textContent: set.version }));
@@ -490,7 +502,7 @@ function typeset() {
   // module blocks the main thread. Compilation is synchronous inside wasm.
   requestAnimationFrame(() => {
     const started = performance.now();
-    const result = rustyfi.compile(sourceEl.value, fontBytes);
+    const result = rustyfi.compile(sourceEl.value, fontBytes, currentLang());
     const ms = Math.round(performance.now() - started);
     if (result.ok) {
       showPdf(result.pdf);
@@ -505,6 +517,23 @@ function typeset() {
   });
 }
 
+/// The two generations have different corpora, so the panel and its count are
+/// re-read from the module rather than filtered client-side.
+function refreshPackages() {
+  const names = rustyfi.packages(currentLang());
+  renderPackages(names, currentLang());
+  return names;
+}
+
+langEl.addEventListener("change", () => {
+  if (!rustyfi) return;
+  const names = refreshPackages();
+  statusEl.className = "";
+  statusEl.textContent =
+    `SATySFi ${langEl.options[langEl.selectedIndex].textContent} \u2014 ` +
+    `${names.length} packages bundled`;
+});
+
 compileBtn.addEventListener("click", typeset);
 shareBtn.addEventListener("click", share);
 sourceEl.addEventListener("keydown", (e) => {
@@ -517,9 +546,8 @@ sourceEl.addEventListener("keydown", (e) => {
 try {
   rustyfi = await instantiateFromUrl("./rustyfi_wasm.wasm");
   $("version").textContent = `v${rustyfi.version()}`;
-  const packages = rustyfi.packages();
-  renderPackages(packages);
-  statusEl.textContent = `ready — ${packages.length} packages bundled`;
+  refreshPackages();
+  statusEl.textContent = `ready — ${rustyfi.packages(currentLang()).length} packages bundled`;
   compileBtn.disabled = false;
   shareBtn.disabled = false;
   // Before the first typeset, so the opening render already has the font.

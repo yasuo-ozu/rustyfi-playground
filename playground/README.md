@@ -7,8 +7,9 @@ local. `.github/workflows/pages.yml` builds and publishes it to GitHub Pages.
 
 The single exception is the **Share** button, which is opt-in and says so on the
 page: it puts the document into a URL and asks a third-party shortener
-([da.gd](https://da.gd/), falling back to [is.gd](https://is.gd/)) to shorten
-it, which means the document goes to that service. Nothing calls out on load or
+([TinyURL](https://tinyurl.com/), falling back to [da.gd](https://da.gd/) and
+[is.gd](https://is.gd/)) to shorten it, which means the document goes to that
+service. Nothing calls out on load or
 on edit, only on that click, and if the service declines you get the long URL
 with a message telling you which one you got.
 

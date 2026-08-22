@@ -48,14 +48,17 @@ function wrap(instance) {
     /// A trap — a stack overflow on a pathologically deep document, say — is
     /// caught and reported as an error rather than left to reject, because a
     /// trapped module is unusable afterwards and the page should say so.
-    compile(source, font) {
+    /// `lang` is `0` for SATySFi 0.0.6 (the default) and `1` for 0.1. Exactly
+    /// one corpus is mounted per call, so a 0.1 document resolves `@require:`
+    /// against the 0.1 packages and never silently against a 0.0.6 one.
+    compile(source, font, lang = 0) {
       const src = new TextEncoder().encode(source);
       let srcPtr = 0, srcLen = 0, fontPtr = 0, fontLen = 0;
       try {
         [srcPtr, srcLen] = push(src);
         [fontPtr, fontLen] = push(font);
         const { ok, bytes } = take(
-          ex.rustyfi_compile_with_font(srcPtr, srcLen, fontPtr, fontLen),
+          ex.rustyfi_compile_with_font_lang(srcPtr, srcLen, fontPtr, fontLen, lang),
         );
         return ok ? { ok: true, pdf: bytes } : { ok: false, error: text(bytes) };
       } catch (e) {
@@ -73,9 +76,9 @@ function wrap(instance) {
       }
     },
 
-    /// The package names a document may `@require:`.
-    packages() {
-      const { bytes } = take(ex.rustyfi_packages());
+    /// The package names a document may `@require:`, for one generation.
+    packages(lang = 0) {
+      const { bytes } = take(ex.rustyfi_packages_lang(lang));
       return text(bytes).split("\n").filter((s) => s.length > 0);
     },
 

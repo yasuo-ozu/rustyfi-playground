@@ -8,8 +8,9 @@ for.
 
 The one exception is deliberate and opt-in: the **Share** button builds a URL
 that carries your document, and shortening that URL hands it to a third-party
-shortener ([da.gd](https://da.gd/), falling back to
-[is.gd](https://is.gd/)). Nothing calls out on load or on edit — only on that
+shortener ([TinyURL](https://tinyurl.com/), falling back to
+[da.gd](https://da.gd/) and [is.gd](https://is.gd/)). Nothing calls out on load
+or on edit — only on that
 click, and the page says so next to the button.
 
 Live at <https://yasuo-ozu.github.io/rustyfi-playground/>.

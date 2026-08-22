@@ -113,25 +113,50 @@ export const PACKAGE_SETS = [
   },
 ];
 
+/// The 0.1 corpus, which is a different set of packages under the same flat
+/// names — `math`, `itemize`, `list` and friends exist in both generations with
+/// genuinely different APIs. Kept in its own table rather than as another
+/// `PACKAGE_SETS` entry because `setFor` keys on the name's prefix, and both
+/// generations' flat names have none: one table per generation is the only way
+/// the two can be told apart at all.
+export const PACKAGE_SETS_V01 = [
+  {
+    prefix: null,
+    name: "SATySFi 0.1 standard library (dev-0-1-0)",
+    repo: "https://github.com/gfngfn/SATySFi/tree/dev-0-1-0",
+    version: "dev-0-1-0, modified",
+    license: "LGPL-3.0",
+    licenseHref: "./licenses/LICENSE.LGPL-3.0.txt",
+    what:
+      "MODIFIED versions of SATySFi's saphe-split branch, adapted for this port \u2014 " +
+      "no file is byte-identical to upstream and roughly 73% of the lines are " +
+      "upstream's. LGPL-3.0 section 4 requires a modified version to be marked as " +
+      "such, and this is that marking. v01-mini and v01-sealed are rustyfi's own.",
+  },
+];
+
+/// The provenance table for one generation.
+export const setsFor = (lang) => (lang === 1 ? PACKAGE_SETS_V01 : PACKAGE_SETS);
+
 /// The set a `@require:` name belongs to, or `null` if nothing claims it.
 ///
 /// A flat name is the standard library by definition; anything else is keyed on
 /// the directory it is published under.
-export function setFor(name) {
+export function setFor(name, lang = 0) {
   const slash = name.indexOf("/");
   const prefix = slash === -1 ? null : name.slice(0, slash);
-  return PACKAGE_SETS.find((set) => set.prefix === prefix) ?? null;
+  return setsFor(lang).find((set) => set.prefix === prefix) ?? null;
 }
 
 /// Group `names` by provenance, keeping the table's order.
 ///
 /// Returns `{ groups, drift }` — `drift` holding every name no entry claims, so
 /// the caller can show it rather than lose it.
-export function groupPackages(names) {
-  const members = new Map(PACKAGE_SETS.map((set) => [set, []]));
+export function groupPackages(names, lang = 0) {
+  const members = new Map(setsFor(lang).map((set) => [set, []]));
   const drift = [];
   for (const name of names) {
-    const set = setFor(name);
+    const set = setFor(name, lang);
     if (set) members.get(set).push(name);
     else drift.push(name);
   }

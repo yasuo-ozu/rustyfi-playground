@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises";
 import { instantiate } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
 import { decodeSource, encodeSource, shareUrl, SHORTENERS } from "./share.js";
-import { PACKAGE_SETS, groupPackages } from "./packages.js";
+import { PACKAGE_SETS, PACKAGE_SETS_V01, groupPackages, setsFor } from "./packages.js";
 
 const wasmPath = process.argv[2];
 if (!wasmPath) {
@@ -47,6 +47,37 @@ check("stdjabook is bundled", packages.includes("stdjabook"), packages.join(", "
 {
   const { groups, drift } = groupPackages(packages);
   check("every bundled package has a stated licence", drift.length === 0, drift.join(", "));
+
+  // The same obligation for the 0.1 corpus, which is a SEPARATE set of files
+  // redistributed under the same licence — and, per `lib-rustyfi/LICENSE`, a
+  // MODIFIED one, which LGPL-3.0 section 4 requires be marked as such.
+  {
+    const v01 = rustyfi.packages(1);
+    check("the 0.1 corpus is bundled", v01.length > 0, "no 0.1 packages");
+    check(
+      "the two generations are different sets",
+      JSON.stringify(v01) !== JSON.stringify(packages),
+      "0.0.6 and 0.1 listed identically, so one corpus is being read twice",
+    );
+    const g1 = groupPackages(v01, 1);
+    check(
+      "every bundled 0.1 package has a stated licence",
+      g1.drift.length === 0,
+      g1.drift.join(", "),
+    );
+    const empty1 = PACKAGE_SETS_V01.filter((s) => !g1.groups.some((g) => g.set === s));
+    check(
+      "every described 0.1 package is actually bundled",
+      empty1.length === 0,
+      empty1.map((s) => s.name).join(", "),
+    );
+    check(
+      "the 0.1 entry marks itself as modified, as the LGPL requires",
+      setsFor(1).every((s) => /modif/i.test(`${s.version} ${s.what}`)),
+      "no modification notice on the 0.1 provenance entry",
+    );
+  }
+
   const empty = PACKAGE_SETS.filter((set) => !groups.some((g) => g.set === set));
   // The mirror image: an entry claiming a package the module no longer carries
   // puts a licence on the page for something that is not there.
@@ -112,6 +143,24 @@ if (!missing.ok) {
 
 // 5. The module survives repeated use — the memory-growth/detached-buffer bug
 //    this glue exists to avoid only shows up on a second large compile.
+// A 0.1 document, against the 0.1 corpus. Without this the language switch is
+// untested plumbing: every check above runs on 0.0.6 and would keep passing
+// while selecting 0.1 failed for everyone.
+{
+  const v01Doc =
+    "@require: v01-mini\n\nlet open V01Mini in\ndocument (| title = `v01` |) '<\n" +
+    "  +p { Hello from 0.1. }\n>\n";
+  const out = rustyfi.compile(v01Doc, null, 1);
+  check("a 0.1 document compiles", out.ok, out.ok ? "" : out.error);
+  if (out.ok) {
+    check("the 0.1 result is a PDF", String.fromCharCode(...out.pdf.slice(0, 5)) === "%PDF-", "");
+  }
+  // …and the same document must NOT compile as 0.0.6, which is what proves the
+  // switch selects a different corpus rather than being decorative.
+  const wrong = rustyfi.compile(v01Doc, null, 0);
+  check("the same document fails as 0.0.6", !wrong.ok, "0.1 source compiled as 0.0.6");
+}
+
 const again = rustyfi.compile(HELLO);
 check("compiling twice still works", again.ok, again.ok ? "" : again.error);
 if (again.ok && good.ok) {
@@ -230,12 +279,17 @@ for (const s of SHORTENERS) {
 check("da.gd parses its own success body",
   SHORTENERS.find((s) => s.id === "da.gd")?.parse("https://da.gd/abc12") === "https://da.gd/abc12",
   "the plain-text success shape must be recognised");
-// TinyURL's keyless endpoint mints links that can serve a deprecation
-// interstitial instead of redirecting — a short URL that does not work. Pinned
-// so it cannot be reintroduced as an "obvious" extra provider.
-check("tinyurl is not a configured shortener",
-  !SHORTENERS.some((s) => s.id.includes("tinyurl")),
-  "tinyurl's keyless API is deprecated and its links can fail to redirect");
+check("tinyurl parses its own success body",
+  SHORTENERS.find((s) => s.id === "tinyurl.com")?.parse("https://tinyurl.com/abc123") ===
+    "https://tinyurl.com/abc123",
+  "the plain-text success shape must be recognised");
+// TinyURL is first by request, but its keyless endpoint has been seen serving a
+// deprecation interstitial instead of redirecting. The fallbacks are what make
+// that survivable, so losing them would quietly turn an intermittent failure
+// into a total one.
+check("a fallback shortener exists behind tinyurl",
+  SHORTENERS.length > 1 && SHORTENERS[0].id === "tinyurl.com",
+  "tinyurl must be first, and must not be the only provider");
 check("is.gd parses its own success body",
   SHORTENERS.find((s) => s.id === "is.gd")?.parse('{ "shorturl": "https://is.gd/AG3Hwv" }') ===
     "https://is.gd/AG3Hwv",
