@@ -35,7 +35,23 @@ export const PLAIN = "0";
 /// provider has already declined.
 export const SHORTENERS = [
   {
+    id: "da.gd",
+    // Plain text, no key, and `access-control-allow-origin: *`. First because
+    // it is the only one of the three that is both keyless BY DESIGN and
+    // currently answering: TinyURL's keyless endpoint is its LEGACY one, and
+    // is.gd is refusing everything.
+    maxUrl: 8000,
+    endpoint: (u) => `https://da.gd/shorten?url=${encodeURIComponent(u)}`,
+    parse: (body) => (body.trim().startsWith("https://") ? body.trim() : null),
+  },
+  {
     id: "tinyurl.com",
+    // `api-create.php` is TinyURL's LEGACY endpoint, kept deliberately: the
+    // current API (`api.tinyurl.com/create`) answers 401 without a Bearer
+    // token, and this page is static and public, so any token shipped in it
+    // would be published along with it. A keyless legacy endpoint that works
+    // beats an authenticated one whose credential cannot be kept.
+    //
     // Plain text: the short URL on success, a body containing "Error"
     // otherwise. No length limit is documented; 8000 is the practical ceiling
     // for a URL that still has to survive being pasted around.

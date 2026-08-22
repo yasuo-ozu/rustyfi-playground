@@ -157,9 +157,9 @@
   #status { font-size: 0.85rem; color: var(--muted); margin-left: auto; }
   #status.ok { color: var(--ok); }
   pre#error {
-    flex: none;
+    flex: 1; min-height: 240px; overflow: auto;
     display: none; white-space: pre-wrap; word-break: break-word;
-    margin: 1rem 0 0; padding: 0.85rem 1rem;
+    margin: 0; padding: 0.85rem 1rem;
     background: var(--error-bg); color: var(--error-ink);
     border: 1px solid var(--error-line); border-radius: 9px;
     font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
@@ -204,7 +204,7 @@
 
   <button class="primary" id="compile" disabled>Typeset (Ctrl+Enter)</button>
   <button id="share" disabled title="Copy a link that carries this document in its URL">Share</button>
-  <span class="hint">Shortening sends this document's link to a URL shortener (TinyURL, then is.gd).</span>
+  <span class="hint">Shortening sends this document's link to a URL shortener (da.gd, TinyURL or is.gd).</span>
   <span id="status">loading the WebAssembly module…</span>
 </header>
 
@@ -218,10 +218,9 @@
       <h2>PDF <span id="dl"></span></h2>
       <div class="empty" id="placeholder">Nothing typeset yet.</div>
       <iframe id="preview" title="Typeset PDF" style="display:none"></iframe>
+      <pre id="error"></pre>
     </section>
   </div>
-
-  <pre id="error"></pre>
 </main>
 
 <script type="module">
@@ -401,17 +400,25 @@ async function loadBundledFont() {
   }
 }
 
+/// The right pane shows exactly one of these at a time. Routing every change
+/// through here is what keeps a stale PDF from sitting under a fresh error, or
+/// an error from lingering beside a successful render.
+function showPane(which) {
+  placeholderEl.style.display = which === "placeholder" ? "grid" : "none";
+  previewEl.style.display = which === "pdf" ? "block" : "none";
+  errorEl.style.display = which === "error" ? "block" : "none";
+}
+
 function showError(message) {
   errorEl.textContent = message;
-  errorEl.style.display = "block";
+  showPane("error");
 }
 
 function showPdf(bytes) {
   if (blobUrl) URL.revokeObjectURL(blobUrl);
   blobUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
   previewEl.src = blobUrl;
-  previewEl.style.display = "block";
-  placeholderEl.style.display = "none";
+  showPane("pdf");
   // Some browsers (notably on mobile) will not render a PDF in an iframe at
   // all, so always offer the file itself.
   $("dl").innerHTML = "";
@@ -426,7 +433,6 @@ function showPdf(bytes) {
 
 function typeset() {
   if (!rustyfi) return;
-  errorEl.style.display = "none";
   compileBtn.disabled = true;
   statusEl.className = "";
   statusEl.textContent = "typesetting…";
