@@ -71,6 +71,69 @@ document (|
 `,
   },
   {
+    name: "Displayed equations",
+    needsFont: true,
+    source: `@require: stdja-mini
+@require: math
+
+document (|
+  title = {Displayed equations};
+  author = {rustyfi};
+|) '<
+  +p {
+    \`+math\` sets an equation on its own line. Fractions nest, radicals grow to
+    fit what is under them, and \`\\paren\` stretches to its contents rather than
+    being a fixed-height glyph.
+  }
+  +math(\${
+    x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}
+  });
+  +p {
+    Big operators carry their limits above and below in display style:
+  }
+  +math(\${
+    \\sum_{k=1}^{n} k^2 = \\frac{n \\paren{n + 1} \\paren{2n + 1}}{6}
+  });
+  +math(\${
+    \\int_{0}^{\\infty} e^{-x^2} \\ordd x = \\frac{\\sqrt{\\pi}}{2}
+  });
+  +math(\${
+    \\lim_{n \\to \\infty} \\paren{1 + \\frac{1}{n}}^n = e
+  });
+>
+`,
+  },
+  {
+    name: "Aligned equations",
+    needsFont: true,
+    source: `@require: stdja-mini
+@require: math
+
+document (|
+  title = {Aligned equations};
+  author = {rustyfi};
+|) '<
+  +p {
+    \`+align\` takes a list of rows, each a list of cells. The cells are aligned
+    on their column boundaries, which is how a derivation lines up on its
+    relation symbol.
+  }
+  +align([
+    [\${\\paren{a + b}^2}; \${= a^2 + 2ab + b^2}];
+    [\${\\paren{a - b}^2}; \${= a^2 - 2ab + b^2}];
+    [\${\\paren{a + b}\\paren{a - b}}; \${= a^2 - b^2}];
+  ]);
+  +p {
+    Nesting is unrestricted, so a fraction may contain a radical containing a
+    sum, and each level is set at the right script size:
+  }
+  +math(\${
+    \\sqrt{\\frac{1}{n} \\sum_{i=1}^{n} \\paren{x_i - \\mu}^2}
+  });
+>
+`,
+  },
+  {
     name: "Inline code",
     needsFont: false,
     source: `@require: stdja-mini
