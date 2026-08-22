@@ -10,6 +10,8 @@
 import { readFile } from "node:fs/promises";
 import { instantiate } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
+import { decodeSource, encodeSource, shareUrl } from "./share.js";
+import { PACKAGE_SETS, groupPackages } from "./packages.js";
 
 const wasmPath = process.argv[2];
 if (!wasmPath) {
@@ -37,6 +39,40 @@ const packages = rustyfi.packages();
 check("bundled corpus is non-empty", packages.length > 0, `got ${packages.length}`);
 check("stdja-mini is bundled", packages.includes("stdja-mini"), packages.join(", "));
 check("stdjabook is bundled", packages.includes("stdjabook"), packages.join(", "));
+
+// 1b. …and every name in it is ATTRIBUTED. This is the one check here that is
+//     not about the page working: the module redistributes third-party SATySFi
+//     source, and a package with no entry in `packages.js` would be served with
+//     its licence unstated. Fail the deploy rather than ship that.
+{
+  const { groups, drift } = groupPackages(packages);
+  check("every bundled package has a stated licence", drift.length === 0, drift.join(", "));
+  const empty = PACKAGE_SETS.filter((set) => !groups.some((g) => g.set === set));
+  // The mirror image: an entry claiming a package the module no longer carries
+  // puts a licence on the page for something that is not there.
+  check(
+    "every described package is actually bundled",
+    empty.length === 0,
+    empty.map((s) => s.name).join(", "),
+  );
+  for (const { set, members } of groups) {
+    const href = set.licenseHref.replace("./", "playground/");
+    // The LGPL/GPL pair is copied out of the submodule by the deploy, so it is
+    // legitimately absent from a source checkout; everything else is committed.
+    const fromSubmodule = /LICENSE\.L?GPL-3\.0\.txt$/.test(href);
+    let present = fromSubmodule;
+    if (!present) {
+      try {
+        await readFile(new URL(`../${href}`, import.meta.url));
+        present = true;
+      } catch {
+        present = false;
+      }
+    }
+    check(`${set.name}: licence text is committed`, present, href);
+    check(`${set.name}: has members`, members.length > 0);
+  }
+}
 
 // 2. A real document, with a real `@require:`, compiles to a real PDF.
 const HELLO = `@require: stdja-mini
@@ -163,6 +199,40 @@ for (const example of EXAMPLES) {
     );
   }
 }
+
+// 9. Share links round-trip EXACTLY. The failure mode this guards against is
+//    silent: a link that loses a byte still opens, it just opens the wrong
+//    document. CJK and the math examples are the interesting inputs, because
+//    both leave the ASCII range where a careless base64 would break.
+//
+//    The is.gd leg is deliberately NOT exercised here: a deploy must not be
+//    gated on a third-party service being up, and this test is offline.
+const shareCases = [
+  ["CJK", "@require: stdjabook\n% 日本語の組版。\ndocument (|title = {組版};|) '<\n  +p { 吾輩は猫である。 }\n>\n"],
+  ...EXAMPLES.map((e) => [`example "${e.name}"`, e.source]),
+  ["empty", ""],
+];
+for (const [name, text] of shareCases) {
+  const param = await encodeSource(text);
+  const back = await decodeSource(param);
+  check(`share round-trip: ${name}`, back === text,
+    back === text ? "" : `${text.length} chars in, ${back.length} out`);
+  check(`share alphabet is URL-safe: ${name}`, /^[01][A-Za-z0-9_-]*$/.test(param),
+    param.slice(0, 48));
+  // A `+` or `/` surviving into the query would be re-encoded or eaten; this
+  // is what makes the parameter safe to paste into a URL unescaped.
+  const url = shareUrl("https://example.invalid/rustyfi-playground/", param);
+  check(`share survives the query string: ${name}`,
+    new URL(url).searchParams.get("src") === param);
+}
+// A link a browser cannot decode must SAY so rather than load garbage.
+let refused = null;
+try {
+  await decodeSource("2AAAA");
+} catch (e) {
+  refused = e.message;
+}
+check("an unknown share encoding is refused", refused !== null, "it decoded something");
 
 console.log(failures === 0 ? "\nall checks passed" : `\n${failures} check(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

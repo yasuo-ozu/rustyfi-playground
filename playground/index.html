@@ -65,6 +65,7 @@
   h1 a:hover { text-decoration: underline; }
   h1 .v { color: var(--muted); font-weight: 400; font-size: 0.75rem; }
   header label { font-size: 0.85rem; color: var(--muted); }
+  .hint { font-size: 0.74rem; color: var(--muted); max-width: 15rem; line-height: 1.3; }
   main {
     padding: 0.75rem 1rem 1rem; max-width: 1400px; margin: 0 auto; width: 100%;
     /* Take the leftover height and pass it down: `min-height: 0` is what lets a
@@ -72,7 +73,7 @@
        overflows the viewport instead of filling it. */
     flex: 1; display: flex; flex-direction: column; min-height: 0;
   }
-  select, button, .filebtn {
+  select, button, .filebtn, .pop > summary {
     font: inherit; font-size: 0.88rem;
     padding: 0.4rem 0.7rem;
     border: 1px solid var(--line); border-radius: 7px;
@@ -84,6 +85,49 @@
   }
   button[disabled] { opacity: 0.55; cursor: progress; }
   .filebtn input { display: none; }
+
+  /* The packages list is long, so it lives in a disclosure that opens OVER the
+     page rather than pushing the editor down — the header has to stay one
+     compact row whatever is bundled. */
+  .pop { position: relative; }
+  .pop > summary { list-style: none; white-space: nowrap; }
+  .pop > summary::-webkit-details-marker { display: none; }
+  .pop > summary::after { content: " ▾"; color: var(--muted); }
+  .pop[open] > summary::after { content: " ▴"; }
+  .pop > summary .n { color: var(--muted); }
+  .popbody {
+    position: absolute; z-index: 20; top: calc(100% + 0.4rem); left: 0;
+    width: min(580px, calc(100vw - 2rem));
+    max-height: min(64vh, 30rem); overflow-y: auto;
+    padding: 0.85rem 1rem;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  }
+  .popbody > p { margin: 0 0 0.7rem; font-size: 0.85rem; color: var(--muted); }
+  .popbody .fine { margin: 0.9rem 0 0; font-size: 0.78rem; }
+  .grp { margin: 0 0 0.85rem; }
+  .grp h3 {
+    margin: 0; font-size: 0.86rem; font-weight: 650;
+    display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline;
+  }
+  .grp .ver {
+    font-family: var(--mono); font-size: 0.72rem; font-weight: 400;
+    color: var(--muted);
+  }
+  .grp .lic {
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.02em;
+    padding: 0.05rem 0.35rem; border: 1px solid var(--line); border-radius: 4px;
+    text-decoration: none;
+  }
+  .grp .what { margin: 0.15rem 0 0.3rem; font-size: 0.79rem; color: var(--muted); }
+  .grp .chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+  .grp .chips code {
+    background: var(--bg); border: 1px solid var(--line);
+    border-radius: 5px; padding: 0.05rem 0.35rem; font-size: 0.75rem;
+  }
+  .grp.drift h3 { color: var(--error-ink); }
+
   .grid {
     display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: stretch;
     flex: 1; min-height: 0;
@@ -120,21 +164,7 @@
     border: 1px solid var(--error-line); border-radius: 9px;
     font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
   }
-  details {
-    flex: none;
-    margin-top: 1rem; border: 1px solid var(--line); border-radius: 9px;
-    background: var(--panel); padding: 0.7rem 1rem;
-  }
-  details + details { margin-top: 0.6rem; }
-  summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
-  details p, details li { color: var(--muted); font-size: 0.88rem; }
-  details ul { margin: 0.5rem 0; padding-left: 1.2rem; }
   code { font-family: var(--mono); font-size: 0.88em; }
-  #packages { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
-  #packages code {
-    background: var(--bg); border: 1px solid var(--line);
-    border-radius: 5px; padding: 0.1rem 0.4rem; font-size: 0.8rem;
-  }
   a { color: var(--accent); }
 </style>
 </head>
@@ -145,12 +175,36 @@
   <label for="example">Example</label>
   <select id="example"></select>
 
-  <label class="filebtn" title="Overrides the bundled Junicode. Unlocks non-Latin text.">
+  <label class="filebtn" title="Overrides the bundled Junicode, and unlocks non-Latin text. The file is read in this tab and is never uploaded.">
     <input type="file" id="font" accept=".ttf,.otf,font/ttf,font/otf">
     <span id="fontlabel">Loading font…</span>
   </label>
 
+  <details class="pop" id="pkgs">
+    <summary>Packages <span class="n" id="pkgcount"></span></summary>
+    <div class="popbody">
+      <p>
+        <code>@require:</code> resolves against exactly this set, through the
+        typesetter's real loader. There is no package manager here and nothing
+        outside the list can be fetched — the corpus is compiled into the
+        WebAssembly module.
+      </p>
+      <div id="pkggroups"></div>
+      <p class="fine">
+        Versions are byte-verified rather than declared: each bundled file's git
+        blob hash was matched against its upstream repository's release tags.
+        <em>+ patch</em> marks a package the typesetter's layout tests carry a
+        local fix to. Every licence text is served beside this page and linked
+        above; LGPL-3.0 incorporates the
+        <a href="./licenses/LICENSE.GPL-3.0.txt">GPL-3.0</a> by reference, so
+        that text is here too.
+      </p>
+    </div>
+  </details>
+
   <button class="primary" id="compile" disabled>Typeset (Ctrl+Enter)</button>
+  <button id="share" disabled title="Copy a link that carries this document in its URL">Share</button>
+  <span class="hint">Shortening sends this document's link to is.gd.</span>
   <span id="status">loading the WebAssembly module…</span>
 </header>
 
@@ -168,53 +222,13 @@
   </div>
 
   <pre id="error"></pre>
-
-  <details open>
-    <summary>What this build can and cannot do</summary>
-    <ul>
-      <li>
-        <strong>Fonts.</strong> <a href="./fonts/Junicode.ttf">Junicode</a> is served with
-        the page and loaded before the first typeset, so the <code>stdja</code> family works
-        out of the box. Without a real face the fallback is the 14 standard PDF fonts, which
-        are WinAnsi Latin — not even the em dash in <code>stdjabook</code>'s own page
-        furniture survives that, and rather than dropping such characters silently the
-        compiler refuses and says so. <strong>Junicode carries no CJK</strong>: for Japanese,
-        pick a <code>.ttf</code>/<code>.otf</code> above and it replaces the bundled one.
-        Whatever you pick never leaves your browser.
-      </li>
-      <li>
-        <strong><code>@require:</code> works</strong>, against the bundled 0.0.6 package
-        corpus listed below — the real packages, resolved by the real loader. Anything
-        outside that list cannot be fetched: there is no package manager here.
-      </li>
-      <li>
-        <strong>No filesystem.</strong> <code>load-image</code>, <code>read-file</code> and
-        <code>load-pdf-image</code> take paths and have nothing to read;
-        <code>load-pdf-image</code> is not compiled into this build at all and says so if
-        you call it.
-      </li>
-      <li>
-        <strong>SATySFi 0.0.6 only.</strong> The 0.1 (<code>saphe-split</code>)
-        <code>use</code>-header dialect needs envelope and dependency configs read from
-        disk, so it is not available in the browser.
-      </li>
-      <li>
-        <strong>It is a single-threaded WebAssembly module</strong> with a fixed stack.
-        A very deeply nested document can exhaust it; the page will say so, and reloading
-        gives you a fresh module.
-      </li>
-    </ul>
-  </details>
-
-  <details>
-    <summary>Bundled packages you can <code>@require:</code></summary>
-    <div id="packages"></div>
-  </details>
 </main>
 
 <script type="module">
 import { instantiateFromUrl } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
+import { decodeSource, encodeSource, shareUrl, shorten, SHORTENER_MAX_URL } from "./share.js";
+import { groupPackages } from "./packages.js";
 
 const $ = (id) => document.getElementById(id);
 const sourceEl = $("source");
@@ -223,10 +237,103 @@ const errorEl = $("error");
 const previewEl = $("preview");
 const placeholderEl = $("placeholder");
 const compileBtn = $("compile");
+const shareBtn = $("share");
 
 let rustyfi = null;
 let fontBytes = null;
 let blobUrl = null;
+
+const el = (tag, props, ...children) => {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children);
+  return node;
+};
+
+const chipList = (names) => {
+  const chips = el("div", { className: "chips" });
+  // `textContent`, not `innerHTML`: these names come out of the module, and
+  // interpolating them as markup would be a habit worth not having.
+  for (const name of names) chips.append(el("code", { textContent: name }));
+  return chips;
+};
+
+function renderPackages(names) {
+  const { groups, drift } = groupPackages(names);
+  const sections = groups.map(({ set, members }) => {
+    const head = el("h3", {}, el("a", { href: set.repo, textContent: set.name }));
+    head.append(el("span", { className: "ver", textContent: set.version }));
+    head.append(el("a", { className: "lic", href: set.licenseHref, textContent: set.license }));
+    return el("section", { className: "grp" },
+      head, el("p", { className: "what", textContent: set.what }), chipList(members));
+  });
+  if (drift.length > 0) {
+    // Loud on purpose: a bundled package with no provenance entry is a
+    // licensing question, not a cosmetic one. `selftest.mjs` fails the deploy
+    // on this, so seeing it here means the check itself was bypassed.
+    sections.push(el("section", { className: "grp drift" },
+      el("h3", { textContent: "Unattributed — please report this" }),
+      el("p", {
+        className: "what",
+        textContent: "Bundled by the module but not described here, so its licence is unstated.",
+      }),
+      chipList(drift)));
+  }
+  $("pkggroups").replaceChildren(...sections);
+  $("pkgcount").textContent = `(${names.length})`;
+}
+
+// Close the packages popover on a click outside it or on Escape: it overlays
+// the editor, so leaving it open is worse than a normal disclosure would be.
+document.addEventListener("click", (e) => {
+  const pop = $("pkgs");
+  if (pop.open && !pop.contains(e.target)) pop.open = false;
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") $("pkgs").open = false;
+});
+
+async function copy(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function share() {
+  shareBtn.disabled = true;
+  statusEl.className = "";
+  statusEl.textContent = "building a link…";
+  try {
+    const long = shareUrl(window.location.href, await encodeSource(sourceEl.value));
+    // `shorten` returns null whenever is.gd declines or is unreachable. Which
+    // link the user actually got has to be SAID: silently handing over a long
+    // one after they asked for a short one is the failure worth avoiding here.
+    const short = await shorten(long);
+    const url = short ?? long;
+    if (!(await copy(url))) {
+      statusEl.className = "";
+      statusEl.textContent = "could not reach the clipboard — link shown below";
+      showError(`${short ? "Short" : "Full"} link (copy it by hand):\n${url}`);
+    } else if (short) {
+      statusEl.className = "ok";
+      statusEl.textContent = `copied a short link — ${short}`;
+    } else {
+      statusEl.className = "";
+      statusEl.textContent =
+        long.length > SHORTENER_MAX_URL
+          ? "too long to shorten — copied the full link"
+          : "could not shorten — copied the full link";
+    }
+  } catch (e) {
+    statusEl.className = "";
+    statusEl.textContent = "could not build a link";
+    showError(`Could not build a share link: ${e && e.message ? e.message : e}`);
+  } finally {
+    shareBtn.disabled = false;
+  }
+}
 
 // Examples first, so the page is readable even if the module fails to load.
 for (const [i, ex] of EXAMPLES.entries()) {
@@ -235,10 +342,36 @@ for (const [i, ex] of EXAMPLES.entries()) {
   option.textContent = ex.name;
   $("example").append(option);
 }
-sourceEl.value = EXAMPLES[0].source;
+// A shared document gets an entry of its own rather than an index, so picking
+// another example and coming back restores it instead of indexing EXAMPLES
+// with a NaN.
+let sharedSource = null;
 $("example").addEventListener("change", (e) => {
-  sourceEl.value = EXAMPLES[Number(e.target.value)].source;
+  const chosen = EXAMPLES[Number(e.target.value)];
+  sourceEl.value = chosen ? chosen.source : sharedSource;
 });
+
+// A shared document wins over the default example, and takes the picker with
+// it: leaving the picker on "Hello world" while the editor holds something
+// else would misdescribe what is on screen.
+const shared = new URLSearchParams(window.location.search).get("src");
+let sharedError = null;
+if (shared) {
+  try {
+    sharedSource = await decodeSource(shared);
+    sourceEl.value = sharedSource;
+    const option = document.createElement("option");
+    option.value = "shared";
+    option.textContent = "Shared document";
+    option.selected = true;
+    $("example").prepend(option);
+  } catch (e) {
+    sharedError = e && e.message ? e.message : String(e);
+    sourceEl.value = EXAMPLES[0].source;
+  }
+} else {
+  sourceEl.value = EXAMPLES[0].source;
+}
 
 $("font").addEventListener("change", async (e) => {
   const file = e.target.files && e.target.files[0];
@@ -317,6 +450,7 @@ function typeset() {
 }
 
 compileBtn.addEventListener("click", typeset);
+shareBtn.addEventListener("click", share);
 sourceEl.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();
@@ -328,11 +462,18 @@ try {
   rustyfi = await instantiateFromUrl("./rustyfi_wasm.wasm");
   $("version").textContent = `v${rustyfi.version()}`;
   const packages = rustyfi.packages();
-  $("packages").innerHTML = packages.map((p) => `<code>${p}</code>`).join("");
+  renderPackages(packages);
   statusEl.textContent = `ready — ${packages.length} packages bundled`;
   compileBtn.disabled = false;
+  shareBtn.disabled = false;
   // Before the first typeset, so the opening render already has the font.
   await loadBundledFont();
+  if (sharedError) {
+    showError(
+      `That share link could not be decoded (${sharedError}), so the first ` +
+      "example is loaded instead.",
+    );
+  }
   typeset();
 } catch (e) {
   statusEl.textContent = "failed to load";
