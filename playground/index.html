@@ -176,10 +176,6 @@
     text-decoration-skip-ink: none;
     text-underline-offset: 0.18em;
   }
-  /* An empty range — a diagnostic that could not be given a width — still has
-     to be visible, so it borrows one character's worth of underline. */
-  #marks mark.empty::after { content: " "; }
-
   /* The problems list. Deliberately under the editor rather than in the
      right-hand pane: it is about the SOURCE, and the right pane belongs to
      the PDF. It collapses to nothing when there is nothing to say. */
@@ -781,7 +777,7 @@ function showDiagnostics(text, diagnostics) {
           sourceEl.scrollTop = Math.max(0, wanted);
         }
       }
-      syncMarks();
+      syncScroll();
     });
     return row;
   });
@@ -802,16 +798,23 @@ function showDiagnostics(text, diagnostics) {
     : `— ${diagnostics.length} problem${diagnostics.length === 1 ? "" : "s"}`;
 }
 
-/// Keep the mirror lined up with the editor.
-///
-/// Two things can move it: scrolling, and the appearance of the textarea's
-/// scrollbar, which narrows the text and re-wraps it. The mirror has no
-/// scrollbar of its own, so it is given the missing width as padding —
-/// otherwise a document long enough to scroll would wrap differently in the
-/// two layers and every underline past the first wrapped line would slide.
-function syncMarks() {
+/// Scroll the mirror with the editor. Cheap enough for a scroll handler:
+/// two property writes and no style read.
+function syncScroll() {
   marksEl.scrollTop = sourceEl.scrollTop;
   marksEl.scrollLeft = sourceEl.scrollLeft;
+}
+
+/// Scroll the mirror AND re-do the scrollbar compensation.
+///
+/// The textarea's scrollbar, when it appears, narrows the text and re-wraps
+/// it. The mirror has no scrollbar of its own, so it is given the missing
+/// width as padding — otherwise a document long enough to scroll would wrap
+/// differently in the two layers and every underline past the first wrapped
+/// line would slide. Only on render and resize, since only those can change
+/// it.
+function syncMarks() {
+  syncScroll();
   const gutter = sourceEl.offsetWidth - sourceEl.clientWidth;
   const pad = getComputedStyle(sourceEl).paddingRight;
   marksEl.style.paddingRight = gutter > 0 ? `calc(${pad} + ${gutter}px)` : pad;
@@ -827,7 +830,7 @@ function invalidateDiagnostics() {
   }
 }
 
-sourceEl.addEventListener("scroll", syncMarks, { passive: true });
+sourceEl.addEventListener("scroll", syncScroll, { passive: true });
 sourceEl.addEventListener("input", () => {
   invalidateDiagnostics();
   scheduleAnalysis();
