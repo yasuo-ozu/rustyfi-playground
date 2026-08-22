@@ -227,10 +227,15 @@ for (const s of SHORTENERS) {
   check(`shortener ${s.id}: maxUrl is a sane positive number`,
     Number.isFinite(s.maxUrl) && s.maxUrl > 100, `maxUrl = ${s.maxUrl}`);
 }
-check("tinyurl parses its own success body",
-  SHORTENERS.find((s) => s.id === "tinyurl.com")?.parse("https://tinyurl.com/abc123") ===
-    "https://tinyurl.com/abc123",
+check("da.gd parses its own success body",
+  SHORTENERS.find((s) => s.id === "da.gd")?.parse("https://da.gd/abc12") === "https://da.gd/abc12",
   "the plain-text success shape must be recognised");
+// TinyURL's keyless endpoint mints links that can serve a deprecation
+// interstitial instead of redirecting — a short URL that does not work. Pinned
+// so it cannot be reintroduced as an "obvious" extra provider.
+check("tinyurl is not a configured shortener",
+  !SHORTENERS.some((s) => s.id.includes("tinyurl")),
+  "tinyurl's keyless API is deprecated and its links can fail to redirect");
 check("is.gd parses its own success body",
   SHORTENERS.find((s) => s.id === "is.gd")?.parse('{ "shorturl": "https://is.gd/AG3Hwv" }') ===
     "https://is.gd/AG3Hwv",

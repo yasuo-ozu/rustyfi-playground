@@ -24,15 +24,20 @@ export const PLAIN = "0";
 /// The shorteners tried, in order, first success wins.
 ///
 /// More than one because a single provider is a single point of failure, and
-/// this one failed: is.gd answered `Error, database insert failed` (HTTP 200,
-/// plain text) to every request regardless of length — a 113-character URL
-/// failed identically to a 2,703-character one — so it is not a length limit,
-/// a rate limit or a CORS problem. TinyURL was verified against the same long
-/// links and echoes `access-control-allow-origin` for this origin.
+/// both of the obvious ones failed:
 ///
-/// is.gd is kept as a fallback rather than deleted: it has worked before and
-/// presumably will again, and trying it costs one request only when the first
-/// provider has already declined.
+/// - **is.gd** answers `Error, database insert failed` (HTTP 200, plain text)
+///   to every request regardless of length — a 113-character URL fails
+///   identically to a 2,703-character one, so it is not a length limit, a rate
+///   limit or a CORS problem. Kept last because it has worked before and
+///   trying it costs a request only after the others have declined.
+/// - **TinyURL is deliberately absent.** Its keyless `api-create.php` is the
+///   LEGACY endpoint, and links minted through it can serve a "created using a
+///   deprecated API end point" interstitial instead of redirecting — so it
+///   returns a short URL that does not work, which is strictly worse than
+///   declining to shorten. Its current API needs a Bearer token, and this page
+///   is static and public, so any token shipped in it would be published with
+///   it. There is no usable TinyURL route from here.
 export const SHORTENERS = [
   {
     id: "da.gd",
@@ -42,21 +47,6 @@ export const SHORTENERS = [
     // is.gd is refusing everything.
     maxUrl: 8000,
     endpoint: (u) => `https://da.gd/shorten?url=${encodeURIComponent(u)}`,
-    parse: (body) => (body.trim().startsWith("https://") ? body.trim() : null),
-  },
-  {
-    id: "tinyurl.com",
-    // `api-create.php` is TinyURL's LEGACY endpoint, kept deliberately: the
-    // current API (`api.tinyurl.com/create`) answers 401 without a Bearer
-    // token, and this page is static and public, so any token shipped in it
-    // would be published along with it. A keyless legacy endpoint that works
-    // beats an authenticated one whose credential cannot be kept.
-    //
-    // Plain text: the short URL on success, a body containing "Error"
-    // otherwise. No length limit is documented; 8000 is the practical ceiling
-    // for a URL that still has to survive being pasted around.
-    maxUrl: 8000,
-    endpoint: (u) => `https://tinyurl.com/api-create.php?url=${encodeURIComponent(u)}`,
     parse: (body) => (body.trim().startsWith("https://") ? body.trim() : null),
   },
   {

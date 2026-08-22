@@ -164,6 +164,22 @@
     border: 1px solid var(--error-line); border-radius: 9px;
     font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
   }
+  #toast {
+    position: fixed; left: 50%; bottom: 1.5rem; transform: translateX(-50%) translateY(0.6rem);
+    max-width: min(92vw, 34rem); z-index: 50;
+    padding: 0.7rem 1rem; border-radius: 10px;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); box-shadow: 0 8px 30px rgba(0,0,0,0.28);
+    font-size: 0.88rem; line-height: 1.45;
+    opacity: 0; pointer-events: none; transition: opacity .18s ease, transform .18s ease;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+  #toast.ok { border-color: var(--ok); }
+  #toast .u {
+    display: block; margin-top: 0.35rem;
+    font-family: var(--mono); font-size: 0.8rem; word-break: break-all; color: var(--muted);
+  }
+  #toast .note { display: block; margin-top: 0.35rem; font-size: 0.78rem; color: var(--muted); }
   code { font-family: var(--mono); font-size: 0.88em; }
   a { color: var(--accent); }
 </style>
@@ -204,7 +220,6 @@
 
   <button class="primary" id="compile" disabled>Typeset (Ctrl+Enter)</button>
   <button id="share" disabled title="Copy a link that carries this document in its URL">Share</button>
-  <span class="hint">Shortening sends this document's link to a URL shortener (da.gd, TinyURL or is.gd).</span>
   <span id="status">loading the WebAssembly module…</span>
 </header>
 
@@ -223,6 +238,8 @@
   </div>
 </main>
 
+<div id="toast" role="status" aria-live="polite"></div>
+
 <script type="module">
 import { instantiateFromUrl } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
@@ -237,6 +254,8 @@ const previewEl = $("preview");
 const placeholderEl = $("placeholder");
 const compileBtn = $("compile");
 const shareBtn = $("share");
+const toastEl = $("toast");
+const SHORTENED_BY = "Shortened by a third-party service, which received this link.";
 
 let rustyfi = null;
 let fontBytes = null;
@@ -300,36 +319,66 @@ async function copy(text) {
   }
 }
 
+let toastTimer = null;
+
+/// A transient popup for the outcome of a Share click.
+///
+/// `note` carries the disclosure that used to sit permanently in the header:
+/// shortening hands this document's link to a third party. It belongs at the
+/// moment that actually happens rather than as standing header text.
+function showToast(message, { url = "", note = "", ok = false } = {}) {
+  toastEl.textContent = message;
+  if (url) {
+    const el = document.createElement("span");
+    el.className = "u";
+    el.textContent = url;
+    toastEl.append(el);
+  }
+  if (note) {
+    const el = document.createElement("span");
+    el.className = "note";
+    el.textContent = note;
+    toastEl.append(el);
+  }
+  toastEl.className = ok ? "show ok" : "show";
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = null;
+  // A link the reader still has to copy BY HAND must not vanish on a timer;
+  // everything else is a confirmation and can.
+  if (ok || !url) {
+    toastTimer = setTimeout(() => {
+      toastEl.className = "";
+    }, 6000);
+  }
+}
+
 async function share() {
   shareBtn.disabled = true;
-  statusEl.className = "";
-  statusEl.textContent = "building a link…";
   try {
     const long = shareUrl(window.location.href, await encodeSource(sourceEl.value));
-    // `shorten` returns null only when EVERY configured shortener declines or
-    // is unreachable. Which
-    // link the user actually got has to be SAID: silently handing over a long
-    // one after they asked for a short one is the failure worth avoiding here.
+    // `shorten` returns null only when EVERY configured shortener declines or is
+    // unreachable. Which link the user actually got has to be SAID: silently
+    // handing over a long one after they asked for a short one is the failure
+    // worth avoiding here.
     const short = await shorten(long);
     const url = short ?? long;
     if (!(await copy(url))) {
-      statusEl.className = "";
-      statusEl.textContent = "could not reach the clipboard — link shown below";
-      showError(`${short ? "Short" : "Full"} link (copy it by hand):\n${url}`);
+      showToast(`Could not reach the clipboard \u2014 copy this ${short ? "short" : "full"} link:`, {
+        url,
+        note: short ? SHORTENED_BY : "",
+      });
     } else if (short) {
-      statusEl.className = "ok";
-      statusEl.textContent = `copied a short link — ${short}`;
+      showToast("Copied a short link", { url: short, note: SHORTENED_BY, ok: true });
     } else {
-      statusEl.className = "";
-      statusEl.textContent =
+      showToast(
         long.length > SHORTENER_MAX_URL
-          ? "too long to shorten — copied the full link"
-          : "could not shorten — copied the full link";
+          ? "Too long to shorten \u2014 copied the full link"
+          : "Could not shorten \u2014 copied the full link",
+        { ok: true },
+      );
     }
   } catch (e) {
-    statusEl.className = "";
-    statusEl.textContent = "could not build a link";
-    showError(`Could not build a share link: ${e && e.message ? e.message : e}`);
+    showToast(`Could not build a share link: ${e && e.message ? e.message : e}`);
   } finally {
     shareBtn.disabled = false;
   }
