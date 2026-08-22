@@ -115,6 +115,12 @@ only way to catch a `lang` that has stopped being threaded anywhere. A share
 link carries the generation too, as `&lang=1`, emitted only for 0.1 so that
 every 0.0.6 link ever minted still means what it did.
 
+One entry carries `refuses`, a regular expression, and is expected NOT to
+compile: it is the cross-version refusal below. The self-test asserts the
+failure *and* the message, which is stricter than asserting a compile — the
+example's own commentary quotes that message, so a refusal that started saying
+something else would leave the page explaining a diagnostic nobody gets.
+
 ## Limitations worth knowing before you file a bug
 
 These are properties of a browser build, not of the typesetter:
@@ -126,13 +132,14 @@ These are properties of a browser build, not of the typesetter:
   `.ttf`/`.otf` with the picker. **Whatever you pick is read in the tab and is
   never uploaded.** No CJK face is bundled because it would cost every visitor
   megabytes.
-- **`@require:` resolves against a fixed bundled corpus only** — the frozen
-  SATySFi 0.0.6 standard library plus a licence-cleared subset of rustyfi's
-  layout-test corpus, both from the `rustyfi/` submodule, baked in by
-  `crates/rustyfi-wasm/build.rs` and resolved by the real loader through
-  `rustyfi_loader::SourceProvider`. There is nowhere to fetch anything else
-  from; the "Packages" panel in the header is the exhaustive list, with each
-  package's upstream, version and licence.
+- **`@require:` resolves against fixed bundled corpora only** — the frozen
+  SATySFi 0.0.6 standard library, a licence-cleared subset of rustyfi's
+  layout-test corpus, and the SATySFi 0.1 standard library, all from the
+  `rustyfi/` submodule, baked in by `crates/rustyfi-wasm/build.rs` and resolved
+  by the real loader through `rustyfi_loader::SourceProvider`. There is nowhere
+  to fetch anything else from; the "Packages" panel lists the selected
+  generation's set, with each package's upstream, version and licence, and
+  both sets together are the exhaustive list (see *Cross-version import*).
 - **No filesystem**, so `load-image`, `read-file` and `load-pdf-image` have
   nothing to read. `load-pdf-image` is not compiled in at all (its reader pulls
   in `rayon` and `getrandom`, neither of which builds for
@@ -149,11 +156,45 @@ These are properties of a browser build, not of the typesetter:
   splice), which is what the "0.1: Multi-stage" example does. A library source
   pasted in is refused clearly — *entry file must be a document (with an
   `in …` body), found a library*.
-- **The two generations never mix.** Exactly one corpus is mounted per compile,
-  chosen by the Lang selector, so the cross-version bridge — a 0.1 document
-  `@require:`-ing a 0.0.6 package — is not reachable from here. That needs both
-  corpora on one lib root, which is a different and much larger build.
+- **Not every cross-version import works** — see below. The ones that do not
+  are refused with their reason rather than mis-rendered.
 - **A fixed 32 MiB stack** (`.cargo/config.toml`), because elaboration and
   typechecking recurse over the merged program. A deep enough document traps;
   the page reports it and a reload gives a fresh module.
 - **It is single-threaded.** A long compile blocks the tab until it finishes.
+
+## Cross-version import
+
+Both package corpora are mounted at once, under `dist/packages/` and
+`dist-v01/packages/`, the way a real library root carries them. The **Lang**
+selector therefore says which generation the *entry document* is written in,
+not which packages exist.
+
+A `@require:` searches the asking file's own generation first and falls back to
+the other, which is the typesetter's own rule — so a 0.1 document can use a
+0.0.6 package, and a 0.0.6 document a 0.1 one. A name present in both
+(`itemize`, `list`, `code`, …) still resolves to the caller's generation, so the
+fallback only ever *adds* resolutions; the self-test pins that in both
+directions, since it is the way this could quietly hand a 0.1 document the
+wrong `itemize`.
+
+The last three examples are this feature:
+
+| example | what crosses |
+|---|---|
+| *a class from the other generation* | the 0.0.6 `stdja-mini` class typesets a 0.1 document, whose body uses 0.1-only staging |
+| *a 0.0.6 command in a 0.1 document* | the 0.1 `v01-mini` class plus `\tabular` from the frozen 0.0.6 `table.satyh` |
+| *a refusal, on purpose* | nothing: `stdjabook`'s type text names `page`, which the two generations represent differently |
+
+Each crossing example requires a package that exists **only** in the other
+corpus, and the self-test checks that as a separate assertion. That is the
+trap worth knowing about here: require a name present in both and the document
+gets its own generation's package, nothing crosses, and the example passes
+while demonstrating nothing.
+
+The refusal is worth reading rather than working around. `page` is a nine-
+constructor variant in 0.0.6 and a pair of lengths in 0.1; `font` is a store
+abbreviation in one and an opaque handle on a loaded face in the other. Those
+are different runtime values sharing a name, so no wrapper exists to write, and
+the port says so instead of guessing. Refusals keyed on a *missing bridge
+feature* rather than a representation fork say that too, in the same message.

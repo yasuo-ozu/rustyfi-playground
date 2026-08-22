@@ -238,7 +238,25 @@ if (fontBytes === null) {
 for (const example of EXAMPLES) {
   const lang = example.lang ?? 0;
   const out = rustyfi.compile(example.source, null, lang);
-  if (example.needsFont) {
+  if (example.refuses) {
+    // An example whose whole point is the refusal. Checking the MESSAGE and
+    // not merely the failure is what makes this worth shipping: the example's
+    // own commentary quotes that message and explains it, so a refusal that
+    // started saying something else would leave the page explaining a
+    // diagnostic nobody gets.
+    check(
+      `example "${example.name}" is refused, as it is meant to be`,
+      !out.ok,
+      "it compiled; drop the refuses pattern",
+    );
+    if (!out.ok) {
+      check(
+        `example "${example.name}" is refused for the stated reason`,
+        example.refuses.test(out.error),
+        out.error.split("\n")[0],
+      );
+    }
+  } else if (example.needsFont) {
     // Expected to fail WITHOUT a font, for the stated reason — if it ever
     // starts succeeding, the label on the page has become a lie.
     check(
@@ -485,11 +503,104 @@ document (|title = {t}; author = {a};|) '<
   // example that opens with a red underline would go unnoticed otherwise.
   for (const example of EXAMPLES) {
     const out = rustyfi.diagnostics(example.source, example.lang ?? 0);
+    if (example.refuses) {
+      // The one example that is supposed to be underlined. It must be
+      // underlined for the RIGHT reason, and exactly once — the page tells
+      // the reader to go and look at it.
+      check(
+        `example "${example.name}" analyses to its one intended problem`,
+        out.ok && out.diagnostics.length === 1 && example.refuses.test(out.diagnostics[0].message),
+        out.ok ? JSON.stringify(out.diagnostics).slice(0, 200) : out.error,
+      );
+    } else {
+      check(
+        `example "${example.name}" analyses clean`,
+        out.ok && out.diagnostics.length === 0,
+        out.ok ? JSON.stringify(out.diagnostics).slice(0, 200) : out.error,
+      );
+    }
+  }
+}
+
+// 11. CROSS-VERSION IMPORT: a 0.1 document `@require:`-ing a 0.0.6 package.
+//
+//     The trap this section exists to avoid is vacuity. If a cross-version
+//     example required a name that exists in BOTH corpora, the loader would
+//     hand a 0.1 document the 0.1 package, nothing would cross, and the check
+//     would pass while demonstrating nothing. So the property checked is not
+//     "it compiles" — section 8 already does that — but "it compiles AND the
+//     package it needs exists ONLY in the other generation's corpus", which
+//     no same-generation resolution can satisfy.
+{
+  const v006 = new Set(rustyfi.packages(0));
+  const v01 = new Set(rustyfi.packages(1));
+  const only006 = (name) => v006.has(name) && !v01.has(name);
+  const requiresOf = (src) => [...src.matchAll(/^@require:[ \t]*(\S+)/gm)].map((m) => m[1]);
+
+  const crossing = EXAMPLES.filter((e) => (e.lang ?? 0) === 1 && requiresOf(e.source).some(only006));
+  check("the page ships cross-version examples", crossing.length > 0,
+    "no 0.1 example requires a 0.0.6-only package");
+
+  for (const example of crossing) {
+    const foreign = requiresOf(example.source).filter(only006);
+    // Non-vacuity, stated as a check rather than assumed: these names are
+    // absent from the 0.1 corpus, so a 0.1 document that resolves them can
+    // only have reached the 0.0.6 tree.
     check(
-      `example "${example.name}" analyses clean`,
-      out.ok && out.diagnostics.length === 0,
-      out.ok ? JSON.stringify(out.diagnostics).slice(0, 200) : out.error,
+      `"${example.name}" requires ${foreign.join(", ")}, which the 0.1 corpus does not have`,
+      foreign.every((n) => !v01.has(n)),
+      foreign.join(", "),
     );
+    const out = rustyfi.compile(example.source, fontBytes, 1);
+    if (example.refuses) {
+      check(`"${example.name}" is refused across the boundary`, !out.ok && example.refuses.test(out.error),
+        out.ok ? "it compiled" : out.error.split("\n")[0]);
+    } else {
+      check(`"${example.name}" really crosses the version boundary`, out.ok,
+        out.ok ? "" : out.error.split("\n")[0]);
+    }
+  }
+
+  // The REVERSE crossing, which no example ships but which mounting both
+  // corpora also makes reachable — and which needed a third compile arm
+  // (`compile_document_v006_xver_with_aux`), since `merge_program` cannot
+  // take a `FileV1`. Untested, that arm would be a panic waiting for the
+  // first person who tried it.
+  {
+    check("`int` is a 0.1-only package", v01.has("int") && !v006.has("int"),
+      "the fixture must be absent from the 0.0.6 corpus, or this proves nothing");
+    const reverse = "@require: stdja-mini\n@require: int\n" +
+      "let n = Int.max 3 9 in\nlet s = embed-string (arabic n) in\n" +
+      "document (|title = {t}; author = {a};|) '<\n  +p { The larger is #s; . }\n>\n";
+    const out = rustyfi.compile(reverse, null, 0);
+    check("a 0.0.6 document can call into a 0.1 package", out.ok,
+      out.ok ? "" : out.error.split("\n")[0]);
+  }
+
+  // Both corpora are mounted at once, like a real library root — but the
+  // loader still searches the asking file's OWN generation first, so a name
+  // present in both must resolve to the caller's. `itemize` is the case that
+  // matters: 0.1's has `?(break)` on `listing` and 0.0.6's does not, so a 0.1
+  // document silently given the 0.0.6 one fails at the CALL site with a
+  // missing label, which reads like a compiler gap.
+  check("a name in both corpora still resolves per generation",
+    v006.has("itemize") && v01.has("itemize"),
+    "the fixture name must exist in both, or this proves nothing");
+  {
+    const shared = "@require: v01-mini\n@require: itemize\n\nlet open V01Mini in\n" +
+      "document (| title = `x` |) '<\n  +Itemize.listing?(break = true)(Item({}, [Item({a}, [])]));\n>\n";
+    const out = rustyfi.compile(shared, null, 1);
+    check("…and a 0.1 document gets the 0.1 itemize, not the 0.0.6 one", out.ok,
+      out.ok ? "" : out.error.split("\n")[0]);
+  }
+  // The mirror, for the generation that was NOT changed by mounting both:
+  // a 0.0.6 document must still get the 0.0.6 package for a shared name.
+  {
+    const shared = "@require: stdja-mini\n@require: itemize\n" +
+      "document (|title = {t}; author = {a};|) '<\n  +listing{ * a\n * b }\n>\n";
+    const out = rustyfi.compile(shared, null, 0);
+    check("a 0.0.6 document still gets the 0.0.6 itemize", out.ok,
+      out.ok ? "" : out.error.split("\n")[0]);
   }
 }
 

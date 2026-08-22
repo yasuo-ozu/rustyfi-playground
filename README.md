@@ -41,8 +41,10 @@ module as the corpora `@require:` resolves against: `lib-rustyfi/dist/packages/`
 (the frozen SATySFi 0.0.6 standard library), a licence-cleared subset of
 `layout-tests/corpus/` (third-party packages such as `easytable`, `xpath` and
 SlyDIFi), and `lib-rustyfi/dist-v01/packages/` (the SATySFi 0.1 standard
-library). Exactly one of the two generations is mounted per compile, chosen by
-the page's Lang selector.
+library). All three are mounted at once, the way a real library root carries
+them; the page's Lang selector chooses the generation the *entry document* is
+read as, and a `@require:` may fall back to the other generation's corpus —
+which is how the cross-version examples work.
 
 ```console
 $ git clone --recurse-submodules git@github.com:yasuo-ozu/rustyfi-playground.git

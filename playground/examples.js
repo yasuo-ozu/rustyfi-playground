@@ -19,6 +19,13 @@
 // Choosing an example sets the header's Lang selector from this field; the
 // self-test compiles each entry under it.
 //
+// `refuses` is a regular expression, and marks an example that is EXPECTED
+// NOT TO COMPILE — the cross-version refusal at the end of the list, which
+// exists to show what a deliberate, explained refusal looks like. The
+// self-test asserts the failure and that its message matches, which is
+// stricter than asserting a compile: a refusal that started saying something
+// else, or that quietly became a success, would both fail.
+//
 // Every example after "Inline code" exercises one bundled third-party package
 // and is adapted from that package's own documentation, cited at the top of
 // each source.
@@ -878,6 +885,171 @@ StdJa.document (|
       The quick brown fox jumps over the lazy dog.
     }
   >
+>
+`,
+  },
+  {
+    name: "0.1 + 0.0.6: a class from the other generation",
+    lang: 1,
+    source: `% CROSS-VERSION IMPORT. This document is SATySFi 0.1, and the class that
+% typesets it is a SATySFi 0.0.6 package.
+%
+% Nothing here selects that. \`@require: stdja-mini\` is an ordinary require;
+% the loader searches the generation of the file asking — 0.1, so
+% dist-v01/packages/ first — and falls back to the other, which is where
+% stdja-mini lives. That fallback IS the bridge. Check the Packages panel
+% with Lang on 0.1 and stdja-mini is not in the list; switch to 0.0.6 and it
+% is. So this example cannot be passing by picking up a 0.1 package of the
+% same name, because there is no such package.
+%
+% What the port does with it, per file rather than per document: the 0.0.6
+% package is parsed with the 0.0.6 grammar, elaborated under 0.0.6, and its
+% bindings are spliced into the merged program wrapped in a version scope,
+% so \`page-break A4Paper\` inside it resolves to 0.0.6's page constructor and
+% 0.0.6's primitive — while everything below is read as 0.1.
+%
+% The staging block proves the second half of that. \`~( ... )\` and \`&\` are
+% 0.1 surface here (0.0.6 spells staging with a whole-file @stage: header),
+% and they run one stage before the document does, so the number in the
+% second paragraph was assembled as code and only then evaluated.
+
+@require: stdja-mini
+
+let unrolled =
+  ~(
+    let rec pow n = if n <= 0 then &(1) else &( 2 * ~(pow (n - 1)) ) in
+    pow 10
+  )
+in
+let n = embed-string (arabic unrolled) in
+
+document (|
+  title  = {Across the generations},
+  author = {rustyfi},
+|) '<
+  +p {
+    This document is read with the SATySFi 0.1 grammar. The comma between
+    the two record fields just above is one place you can see that, since
+    0.0.6 separates them with a semicolon instead. The class that typesets
+    it, \\emph{stdja-mini}, is a 0.0.6 package, and so are the +p and
+    \\bold{emph} commands themselves.
+  }
+  +p {
+    The unrolled power above is 0.1-only staging, and it gives #n;.
+  }
+>
+`,
+  },
+  {
+    name: "0.1 + 0.0.6: a 0.0.6 command in a 0.1 document",
+    lang: 1,
+    source: `% The other way round from the previous example: here the CLASS is 0.1
+% (v01-mini, from dist-v01/packages/) and one COMMAND comes from 0.0.6 —
+% \\tabular, out of the frozen 0.0.6 standard library's table.satyh, which
+% has no counterpart in the 0.1 corpus at all.
+%
+% Both packages are in one program at once, each read as its own generation.
+% That is the point worth seeing: the boundary is per FILE, not per document,
+% so a 0.1 document does not have to choose a side.
+%
+% Everything below the requires is 0.1 surface — commas in list literals,
+% \`match ... end\`, parenthesised command arguments — while the command being
+% called declares its argument types in 0.0.6:
+%
+%   direct \\tabular : [ (| l : inline-text -> cell; ... |) -> (cell list) list;
+%                       length list -> length list -> graphics list ] inline-cmd
+%
+% The record of cell constructors it hands the callback, and the two lists of
+% boundary positions it hands the rule function, cross the boundary as
+% ordinary values; nothing about them is version-forked.
+
+@require: v01-mini
+@require: table
+
+% The last element of a list, for the table's right-hand edge.
+let rec last d xs =
+  match xs with
+  | []        -> d
+  | x :: rest -> last x rest
+  end
+in
+
+% cs is the record table.satyh passes in: c centres a cell, l left-aligns it.
+let rows cs = [
+  [cs#c({generation}), cs#c({what it supplies})],
+  [cs#l({0.1}),        cs#l({the document class, v01-mini})],
+  [cs#l({0.0.6}),      cs#l({the tabular command, from table})],
+] in
+
+% xs and ys are the column and row boundaries, in the table's own
+% coordinates. One rule per row boundary, full width.
+let rules xs ys =
+  let right = last 0pt xs in
+  let rec hlines ys =
+    match ys with
+    | []        -> []
+    | y :: rest ->
+        stroke 0.5pt (Gray 0.6)
+          (start-path (0pt, y) |> line-to (right, y) |> terminate-path)
+          :: hlines rest
+    end
+  in
+  hlines ys
+in
+
+let open V01Mini in
+document (| title = \`A 0.0.6 table in a 0.1 document\` |) '<
+  +p { Below, a table drawn entirely by 0.0.6 code: }
+  +p {
+    \\tabular(rows)(rules);
+  }
+  +p { And back to the 0.1 class for this paragraph. }
+>
+`,
+  },
+  {
+    name: "0.1 + 0.0.6: a refusal, on purpose",
+    lang: 1,
+    // Expected to FAIL, and the self-test asserts the reason rather than
+    // compiling it — see `refuses` there.
+    refuses: /cross-version import[\s\S]*`page`/,
+    source: `% THIS EXAMPLE DOES NOT COMPILE, AND THAT IS THE POINT. Press Typeset and
+% read what comes back; the problem listed under the editor says the same.
+%
+% The two previous examples cross the version boundary. This one asks for a
+% crossing that cannot be made, and the port refuses it with the reason
+% rather than mis-rendering:
+%
+%   cross-version import (X3): dependency stdjabook.satyh references \`page\`,
+%   a version-forked builtin — 0.0.6's page is a 9-ctor ADT; 0.1's is a
+%   length*length tuple — no shared runtime representation
+%
+% \`page\` is a REPRESENTATION fork. In 0.0.6 a page size is a variant with
+% nine constructors (A0Paper … UserDefinedPaper); in 0.1 it is a pair of
+% lengths. Those are different runtime values wearing the same name, so
+% there is no wrapper to write: a bridge would have to invent an answer for
+% \`A4Paper\` under a vocabulary that has no constructors at all. The same
+% holds for \`font\`, a store abbreviation in one generation and an opaque
+% handle on a loaded face in the other.
+%
+% Contrast stdja-mini two examples up, which crosses cleanly. It calls
+% \`page-break A4Paper\` too — but it writes no TYPE annotation mentioning
+% \`page\`, so nothing in its text has to be re-read under 0.1's vocabulary
+% and the constructor resolves inside its own version scope. The refusal is
+% keyed on what a package's type text NAMES, not on what it does.
+%
+% A refusal costs you the package, not the generation: switch Lang to 0.0.6
+% and stdjabook is available in full.
+
+@require: stdjabook
+
+document (|
+  title  = {Refused},
+  author = {rustyfi},
+  show-title = true,
+  show-toc = false,
+|) '<
+  +p { This paragraph is never reached. }
 >
 `,
   },

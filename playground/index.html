@@ -268,10 +268,18 @@
     <summary>Packages <span class="n" id="pkgcount"></span></summary>
     <div class="popbody">
       <p>
-        <code>@require:</code> resolves against exactly this set, through the
+        What the selected generation publishes, resolved through the
         typesetter's real loader. There is no package manager here and nothing
-        outside the list can be fetched — the corpus is compiled into the
-        WebAssembly module.
+        outside the two lists can be fetched — both corpora are compiled into
+        the WebAssembly module.
+      </p>
+      <p>
+        Switching <b>Lang</b> switches this list, but not what a document can
+        reach: a <code>@require:</code> searches its own generation first and
+        falls back to the other, so a 0.1 document may use a 0.0.6 package and
+        the reverse. That fallback is the port's cross-version bridge, and the
+        last three examples exercise it — including one crossing it refuses,
+        with the reason.
       </p>
       <div id="pkggroups"></div>
       <p class="fine">

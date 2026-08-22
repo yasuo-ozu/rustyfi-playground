@@ -33,11 +33,28 @@
 //!   `pdf-image` feature is off — see `rustyfi-lang`'s `Cargo.toml`) and says
 //!   so when called.
 //! - **`@require:`ing anything outside the bundled corpus.** There is no
-//!   package manager here; [`package_names`] is the exhaustive list.
-//! - **0.1 (`saphe-split`) documents.** `LoadMode::Envelopes` reads its deps
-//!   and envelope configs through `std::fs` directly, which is why
-//!   `LoadOptions::sources` is refused there rather than half-applied. This
-//!   entry point is 0.0.6 only.
+//!   package manager here; [`package_names_for`] over both generations is the
+//!   exhaustive list.
+//!
+//! # Both generations, on one root
+//!
+//! [`EmbeddedCorpus`] mounts the 0.0.6 corpus under `dist/packages/` and the
+//! 0.1 corpus under `dist-v01/packages/` **at the same time**, which is how a
+//! real library root carries them. [`Lang`] therefore says which generation
+//! the ENTRY is read as, not which tree exists.
+//!
+//! That is what makes CROSS-VERSION IMPORT reachable: a 0.1 document may
+//! `@require:` a 0.0.6 package (and the reverse), because
+//! `v006::resolve::resolve_require` searches the asking generation first and
+//! falls back to the other. A name in both corpora still resolves to the
+//! caller's own generation, so nothing is ambiguous — the fallback only ever
+//! adds resolutions.
+//!
+//! Not every crossing is possible, and the refusals are loud rather than
+//! silent: a package whose type text names a REPRESENTATION-forked builtin
+//! (`page`, `font`) is refused with the reason. See the typesetter's own
+//! `CLAUDE.md` for the full account, and the playground's last example for
+//! what a refusal looks like.
 //!
 //! # ABI
 //!
@@ -89,11 +106,12 @@ const ENTRY_PATH: &str = "/rustyfi/doc/main.saty";
 /// Every path is absolute and unique by construction (they are all built by
 /// joining onto [`VIRTUAL_ROOT`]), so canonicalization is LEXICAL — see
 /// [`SourceProvider::canonicalize`] for why that is enough.
-/// Which SATySFi generation to compile as.
+/// Which SATySFi generation the ENTRY DOCUMENT is written in.
 ///
-/// The playground compiles one or the other, never a mixture: the
-/// cross-version bridge needs both corpora on the lib root at once, which is a
-/// different (and much larger) build than this one.
+/// Not which corpus is available: both are mounted at once (see
+/// [`EmbeddedCorpus::for_lang`]), so this chooses the grammar the entry is
+/// parsed with and the generation its `@require:`s are searched for FIRST.
+/// A dependency is read as its own generation regardless.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Lang {
     /// SATySFi 0.0.6, the default.
@@ -135,31 +153,47 @@ impl EmbeddedCorpus {
         Self::for_lang(source, Lang::V0_0)
     }
 
-    /// The corpus for one generation.
+    /// The corpus, with `source` mounted as the entry document of generation
+    /// `lang`.
     ///
-    /// Only one is mounted, not both: the two vocabularies share names
-    /// (`itemize`, `list`, `code`) with different APIs, and `@require:` is
-    /// resolved against the root the document's own generation names. Mounting
-    /// both and letting the loader's cross-generation fallback pick would make
-    /// a 0.1 document silently compile against a 0.0.6 package.
-    pub fn for_lang(source: &str, lang: Lang) -> Self {
-        let (dist, table) = match lang {
-            Lang::V0_0 => ("dist", CORPUS),
-            Lang::V0_1 => ("dist-v01", CORPUS_V01),
+    /// **Both generations are mounted, side by side, exactly as a real library
+    /// root carries them** — the 0.0.6 corpus under `dist/packages/` and the
+    /// 0.1 corpus under `dist-v01/packages/`. `lang` therefore does not select
+    /// a tree; it selects the generation the ENTRY is read as, which the
+    /// loader takes from [`LoadOptions::version`].
+    ///
+    /// This once mounted one tree only, on the reasoning that names like
+    /// `itemize`, `list` and `code` exist in both with different APIs and a
+    /// 0.1 document must not silently get the 0.0.6 one. That risk is real and
+    /// it is already handled, one layer down and better:
+    /// `v006::resolve::resolve_require` searches the load's OWN generation
+    /// FIRST and the other only as a fallback, so a name present in both
+    /// resolves to the caller's generation and a name present in neither still
+    /// fails. Withholding the other tree did not add safety on top of that; it
+    /// only removed the fallback — and that fallback IS the cross-version
+    /// bridge, which is how a 0.1 document reaches a 0.0.6-only package like
+    /// `easytable`. Doing it here also means resolution order stays the
+    /// loader's one rule rather than becoming two that can disagree.
+    ///
+    /// Nothing is duplicated in the module: both tables are compiled in
+    /// already, because the packages panel lists either generation's on demand.
+    pub fn for_lang(source: &str, _lang: Lang) -> Self {
+        let root = Path::new(VIRTUAL_ROOT);
+        let mount = |dist: &str, table: &'static [(&'static str, &'static str)]| {
+            let packages = root.join(dist).join("packages");
+            table.iter().map(move |(name, text)| {
+                // `build.rs` spells a nested package `easytable/matrix.satyg`
+                // because that is the `@require:` path; joining the whole
+                // string would keep the `/` verbatim on a host whose
+                // separator is `\`, and then never match what the loader
+                // builds component by component.
+                let path = name.split('/').fold(packages.clone(), |p, part| p.join(part));
+                (path, *text)
+            })
         };
-        let packages = Path::new(VIRTUAL_ROOT).join(dist).join("packages");
         EmbeddedCorpus {
-            files: table
-                .iter()
-                .map(|(name, text)| {
-                    // `build.rs` spells a nested package `easytable/matrix.satyg`
-                    // because that is the `@require:` path; joining the whole
-                    // string would keep the `/` verbatim on a host whose
-                    // separator is `\`, and then never match what the loader
-                    // builds component by component.
-                    let path = name.split('/').fold(packages.clone(), |p, part| p.join(part));
-                    (path, *text)
-                })
+            files: mount("dist", CORPUS)
+                .chain(mount("dist-v01", CORPUS_V01))
                 .collect(),
             entry: (PathBuf::from(ENTRY_PATH), source.to_string()),
         }
@@ -252,6 +286,12 @@ pub fn package_names() -> Vec<&'static str> {
 }
 
 /// [`package_names`], for one generation.
+///
+/// What that generation PUBLISHES, which is what the page's packages panel
+/// lists. It is not the whole set a document of that generation can reach:
+/// both corpora are mounted, so a name absent here may still resolve through
+/// the loader's cross-generation fallback — that is exactly how the
+/// playground's cross-version examples work.
 pub fn package_names_for(lang: Lang) -> Vec<&'static str> {
     let table = match lang {
         Lang::V0_0 => CORPUS,
@@ -360,14 +400,33 @@ fn build_document(
     .map_err(|e| e.to_string())?;
 
     let mut aux = rustyfi_lang::crossref::AuxTable::new();
-    // Mirrors the CLI's own dispatch: 0.1 libraries are modules, not
-    // prelude-concatenable flat binding lists, so they never go through
-    // `merge_program`. The CLI's third arm — a 0.0.6 root with a foreign 0.1
-    // dependency — cannot arise here, because exactly one corpus is mounted.
+    // The CLI's own dispatch, all three arms of it.
+    //
+    // 0.1 libraries are modules, not prelude-concatenable flat binding lists,
+    // so they never go through `merge_program`; a 0.0.6 dependency spliced
+    // into a 0.1 program arrives at `compile_document_v1_with_aux` as a
+    // `LoadedCst::V0_0` and is handled there.
+    //
+    // The third arm is the reverse crossing — a 0.0.6 entry that reached a 0.1
+    // package — and it is not hypothetical here now that both corpora are
+    // mounted. `merge_program` cannot take it (its files are `FileV1`s, not
+    // preludes), so the presence of one routes the whole load through the
+    // cross-version entry point, exactly as `main.rs` does and only when such
+    // a dependency is actually present, so a pure 0.0.6 load is unchanged.
     Ok(match lang {
         Lang::V0_1 => rustyfi_lang::compile_document_v1_with_aux(&program.files, metrics, &mut aux)
             .map_err(|e| e.to_string())?
             .0,
+        Lang::V0_0
+            if program
+                .files
+                .iter()
+                .any(|f| matches!(f.cst, rustyfi_loader::LoadedCst::V0_1(_))) =>
+        {
+            rustyfi_lang::compile_document_v006_xver_with_aux(&program.files, metrics, &mut aux)
+                .map_err(|e| e.to_string())?
+                .0
+        }
         Lang::V0_0 => {
             let (merged, stages) = merge_program(program)?;
             rustyfi_lang::compile_document_cst_with_stages(&merged, metrics, &mut aux, &stages)
@@ -757,6 +816,98 @@ pub unsafe extern "C" fn rustyfi_output_free(out: *mut Output) {
 
 #[cfg(test)]
 mod tests {
+    /// A 0.1 document `@require:`-ing a package that exists ONLY in the 0.0.6
+    /// corpus.
+    ///
+    /// The check that makes this non-vacuous is the second assertion: if
+    /// `table` also existed under `dist-v01/packages/`, the loader would hand
+    /// a 0.1 document that one, nothing would cross, and this test would pass
+    /// while proving nothing. That is the standing trap with cross-version
+    /// tests, and it is why the name is asserted absent rather than assumed to
+    /// be.
+    #[test]
+    fn a_v01_document_reaches_a_v006_only_package() {
+        use super::*;
+        assert!(package_names_for(Lang::V0_0).contains(&"table"));
+        assert!(
+            !package_names_for(Lang::V0_1).contains(&"table"),
+            "`table` must be absent from the 0.1 corpus, or this test is vacuous"
+        );
+        let src = "@require: v01-mini\n@require: table\n\n\
+                   let rows cs = [[cs#l({a}), cs#l({b})]] in\n\
+                   let open V01Mini in\n\
+                   document (| title = `x` |) '<\n  \
+                     +p { \\tabular(rows)(fun xs ys -> []); }\n\
+                   >\n";
+        let pdf = compile_with_font_lang(src, None, Lang::V0_1)
+            .unwrap_or_else(|e| panic!("a 0.0.6 package should cross into a 0.1 document: {e}"));
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    /// And the reverse, which needs `build_document`'s THIRD arm — a 0.0.6
+    /// entry whose dependency graph contains a 0.1 file cannot go through
+    /// `merge_program`, whose input is a prelude rather than a `FileV1`.
+    #[test]
+    fn a_v006_document_reaches_a_v01_only_package() {
+        use super::*;
+        assert!(
+            package_names_for(Lang::V0_1).contains(&"int")
+                && !package_names_for(Lang::V0_0).contains(&"int"),
+            "`int` must be 0.1-only, or this test is vacuous"
+        );
+        let src = "@require: stdja-mini\n@require: int\n\
+                   let n = Int.max 3 9 in\n\
+                   let s = embed-string (arabic n) in\n\
+                   document (|title = {t}; author = {a};|) '<\n  \
+                     +p { The larger is #s; . }\n\
+                   >\n";
+        let pdf = compile_with_font_lang(src, None, Lang::V0_0)
+            .unwrap_or_else(|e| panic!("a 0.1 package should cross into a 0.0.6 document: {e}"));
+        assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    /// A crossing the bridge refuses says WHY, and names the type that forked.
+    /// The playground ships an example whose whole content is that message.
+    #[test]
+    fn an_unbridgeable_crossing_is_refused_with_its_reason() {
+        use super::*;
+        let src = "@require: stdjabook\n\
+                   document (| title = {t}, author = {a}, show-title = true, show-toc = false |) '<\n  \
+                     +p { x }\n\
+                   >\n";
+        let err = compile_with_font_lang(src, None, Lang::V0_1)
+            .expect_err("`page` is a representation fork and cannot cross");
+        assert!(err.contains("cross-version import"), "{err}");
+        assert!(err.contains("`page`"), "{err}");
+    }
+
+    /// Mounting both corpora must not change which package a document of
+    /// either generation gets for a name that exists in BOTH. The loader
+    /// searches the asking generation first; this pins that the playground
+    /// still relies on it rather than on only one tree being present.
+    #[test]
+    fn a_shared_name_still_resolves_to_the_asking_generation() {
+        use super::*;
+        assert!(
+            package_names_for(Lang::V0_0).contains(&"itemize")
+                && package_names_for(Lang::V0_1).contains(&"itemize"),
+            "the fixture name must exist in both corpora"
+        );
+        // 0.1's `Itemize.listing` takes `?(break = ..)`; 0.0.6's `itemize` has
+        // no such member at all, so getting the wrong one fails here.
+        let v01 = "@require: v01-mini\n@require: itemize\n\nlet open V01Mini in\n\
+                   document (| title = `x` |) '<\n  \
+                     +Itemize.listing?(break = true)(Item({}, [Item({a}, [])]));\n\
+                   >\n";
+        assert!(compile_with_font_lang(v01, None, Lang::V0_1).is_ok());
+        // …and 0.0.6's own `+listing`, which the 0.1 package does not provide.
+        let v006 = "@require: stdja-mini\n@require: itemize\n\
+                    document (|title = {t}; author = {a};|) '<\n  \
+                      +listing{ * a\n * b }\n\
+                    >\n";
+        assert!(compile_with_font_lang(v006, None, Lang::V0_0).is_ok());
+    }
+
     /// The 0.1 corpus is mounted and compiles. Without this the `Lang` switch
     /// is untested plumbing: the 0.0.6 path would keep passing while selecting
     /// 0.1 failed for everyone.
