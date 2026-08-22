@@ -14,6 +14,11 @@ on:
       - "playground/**"
       - "crates/**"
       - "rustyfi"
+      # The other half of that pin: the gitlink says WHICH commit, `.gitmodules`
+      # says which repository it is cloned from, and `submodules: recursive`
+      # reads both. Retargeting the URL rebuilds the module from different
+      # source without the gitlink necessarily moving.
+      - ".gitmodules"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".cargo/config.toml"
