@@ -1,0 +1,108 @@
+name: Playground (GitHub Pages)
+
+# Builds `crates/rustyfi-wasm` against the pinned `rustyfi/` submodule and
+# deploys it alongside `playground/` to GitHub Pages.
+on:
+  push:
+    branches: [main]
+    # Only the inputs the artifact is actually built from. `rustyfi` is the
+    # submodule's gitlink: the 0.0.6 package corpus baked into the module by
+    # `crates/rustyfi-wasm/build.rs` lives inside it, so moving the pin
+    # genuinely changes the deployed site — which is also what `bump.yml`
+    # commits.
+    paths:
+      - "playground/**"
+      - "crates/**"
+      - "rustyfi"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time. Not `cancel-in-progress`: cancelling midway can
+# leave the Pages deployment half-applied, and these runs are cheap enough that
+# queueing is the safer trade.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the WebAssembly module
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # The typesetter itself is the submodule; without this the build has
+          # no `rustyfi-lang` to compile and no package corpus to bake in.
+          submodules: recursive
+
+      - name: Install Rust with the wasm target
+        # The ref names the TOOLCHAIN, not an action version — this action's
+        # documented interface — so there is no version here to pin.
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+
+      # No wasm-bindgen, no wasm-pack: the module is a plain cdylib exporting a
+      # C ABI, so this is the entire build step and there is no CLI whose
+      # version has to be kept in lockstep with a crate's.
+      #
+      # The 32 MiB shadow stack this needs comes from `.cargo/config.toml`'s
+      # `[target.wasm32-unknown-unknown]` rustflags, not from here, so a local
+      # build gets it too.
+      #
+      # Deliberately not `--locked`: `bump.yml` moves the submodule pin without
+      # running cargo, so `Cargo.lock` can legitimately lag a bump by one
+      # commit and cargo should be free to re-resolve the path dependencies.
+      - name: Build
+        run: cargo build -p rustyfi-wasm --release --target wasm32-unknown-unknown
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp playground/index.html playground/rustyfi.js playground/examples.js _site/
+          cp target/wasm32-unknown-unknown/release/rustyfi_wasm.wasm _site/
+          # Pages serves what is here verbatim; Jekyll would otherwise try to
+          # process it and drop files beginning with an underscore.
+          touch _site/.nojekyll
+          ls -l _site
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # Gate the deploy on the module actually typesetting. It runs against the
+      # very files that are about to be uploaded — including every example the
+      # page ships — so a module that builds but cannot compile a document
+      # never reaches the site. This is also what keeps a bad submodule bump
+      # out of the site, since `bump.yml` commits its pin unbuilt.
+      - name: Verify the module end to end
+        run: node playground/selftest.mjs _site/rustyfi_wasm.wasm
+
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5
