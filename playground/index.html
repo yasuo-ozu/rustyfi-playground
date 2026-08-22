@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rustyfi playground — SATySFi in your browser</title>
+<meta name="description" content="Compile SATySFi documents to PDF entirely in the browser, with the rustyfi typesetter compiled to WebAssembly.">
+<style>
+  /* Everything is inline and local: no CDN, no web fonts, no analytics. The
+     page is served from a project subpath on GitHub Pages, so every URL it
+     references is relative. */
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfd;
+    --panel: #ffffff;
+    --ink: #16161a;
+    --muted: #5c5f6b;
+    --line: #d9dce3;
+    --accent: #7a4fd6;
+    --accent-ink: #ffffff;
+    --error-bg: #fdf0ef;
+    --error-ink: #8d2f22;
+    --error-line: #e8b4ad;
+    --ok: #1f7a44;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15161a;
+      --panel: #1c1e24;
+      --ink: #e8e8ec;
+      --muted: #a0a4b0;
+      --line: #32353f;
+      --accent: #a888f0;
+      --accent-ink: #14121c;
+      --error-bg: #2c1c1b;
+      --error-ink: #ffb3a7;
+      --error-line: #5e332e;
+      --ok: #6edb9c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 1.1rem 1.25rem 0.9rem;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  h1 { margin: 0 0 0.2rem; font-size: 1.2rem; letter-spacing: -0.01em; }
+  h1 .v { color: var(--muted); font-weight: 400; font-size: 0.8rem; }
+  header p { margin: 0; color: var(--muted); font-size: 0.88rem; max-width: 62ch; }
+  main { padding: 1rem 1.25rem 2.5rem; max-width: 1400px; margin: 0 auto; }
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center;
+    margin-bottom: 0.85rem;
+  }
+  .bar label { font-size: 0.85rem; color: var(--muted); }
+  select, button, .filebtn {
+    font: inherit; font-size: 0.88rem;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--line); border-radius: 7px;
+    background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button.primary {
+    background: var(--accent); color: var(--accent-ink);
+    border-color: transparent; font-weight: 600;
+  }
+  button[disabled] { opacity: 0.55; cursor: progress; }
+  .filebtn input { display: none; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: stretch; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .pane { display: flex; flex-direction: column; min-width: 0; }
+  .pane > h2 {
+    margin: 0 0 0.4rem; font-size: 0.76rem; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--muted); font-weight: 600;
+  }
+  textarea {
+    width: 100%; height: 60vh; min-height: 340px; resize: vertical;
+    padding: 0.8rem; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--panel); color: var(--ink);
+    font-family: var(--mono); font-size: 13px; line-height: 1.5;
+    tab-size: 2;
+  }
+  iframe {
+    width: 100%; height: 60vh; min-height: 340px;
+    border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+  }
+  .empty {
+    height: 60vh; min-height: 340px; display: grid; place-items: center;
+    border: 1px dashed var(--line); border-radius: 9px; color: var(--muted);
+    font-size: 0.9rem; text-align: center; padding: 1rem;
+  }
+  #status { font-size: 0.85rem; color: var(--muted); margin-left: auto; }
+  #status.ok { color: var(--ok); }
+  pre#error {
+    display: none; white-space: pre-wrap; word-break: break-word;
+    margin: 1rem 0 0; padding: 0.85rem 1rem;
+    background: var(--error-bg); color: var(--error-ink);
+    border: 1px solid var(--error-line); border-radius: 9px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+  }
+  details {
+    margin-top: 1.5rem; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--panel); padding: 0.7rem 1rem;
+  }
+  details + details { margin-top: 0.6rem; }
+  summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+  details p, details li { color: var(--muted); font-size: 0.88rem; }
+  details ul { margin: 0.5rem 0; padding-left: 1.2rem; }
+  code { font-family: var(--mono); font-size: 0.88em; }
+  #packages { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+  #packages code {
+    background: var(--bg); border: 1px solid var(--line);
+    border-radius: 5px; padding: 0.1rem 0.4rem; font-size: 0.8rem;
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>rustyfi playground <span class="v" id="version"></span></h1>
+  <p>
+    The <a href="https://github.com/yasuo-ozu/rustyfi">rustyfi</a> SATySFi typesetter,
+    compiled to WebAssembly. Your document is typeset entirely in this tab — nothing is
+    uploaded, and there is no server.
+  </p>
+</header>
+
+<main>
+  <div class="bar">
+    <label for="example">Example</label>
+    <select id="example"></select>
+
+    <label class="filebtn" title="Optional. Unlocks non-Latin text and the full stdja classes.">
+      <input type="file" id="font" accept=".ttf,.otf,font/ttf,font/otf">
+      <span id="fontlabel">Use a font from your machine…</span>
+    </label>
+
+    <button class="primary" id="compile" disabled>Typeset (Ctrl+Enter)</button>
+    <span id="status">loading the WebAssembly module…</span>
+  </div>
+
+  <div class="grid">
+    <section class="pane">
+      <h2>Source</h2>
+      <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+    </section>
+    <section class="pane">
+      <h2>PDF <span id="dl"></span></h2>
+      <div class="empty" id="placeholder">Nothing typeset yet.</div>
+      <iframe id="preview" title="Typeset PDF" style="display:none"></iframe>
+    </section>
+  </div>
+
+  <pre id="error"></pre>
+
+  <details open>
+    <summary>What this build can and cannot do</summary>
+    <ul>
+      <li>
+        <strong>Fonts.</strong> By default it renders with the 14 standard PDF fonts, which
+        are WinAnsi Latin. <strong>Japanese and other non-Latin text will not
+        typeset</strong>, and neither will the full <code>stdja</code> /
+        <code>stdjabook</code> / <code>stdjareport</code> classes — their own page
+        furniture contains an em dash, which is already outside WinAnsi. Rather than
+        silently dropping such characters, the compiler refuses and tells you.
+        <strong>Pick a <code>.ttf</code>/<code>.otf</code> from your machine above and all
+        of that starts working</strong>, including CJK if the font has the glyphs. The font
+        never leaves your browser; bundling one here would have added megabytes to the page
+        load for everyone.
+      </li>
+      <li>
+        <strong><code>@require:</code> works</strong>, against the bundled 0.0.6 package
+        corpus listed below — the real packages, resolved by the real loader. Anything
+        outside that list cannot be fetched: there is no package manager here.
+      </li>
+      <li>
+        <strong>No filesystem.</strong> <code>load-image</code>, <code>read-file</code> and
+        <code>load-pdf-image</code> take paths and have nothing to read;
+        <code>load-pdf-image</code> is not compiled into this build at all and says so if
+        you call it.
+      </li>
+      <li>
+        <strong>SATySFi 0.0.6 only.</strong> The 0.1 (<code>saphe-split</code>)
+        <code>use</code>-header dialect needs envelope and dependency configs read from
+        disk, so it is not available in the browser.
+      </li>
+      <li>
+        <strong>It is a single-threaded WebAssembly module</strong> with a fixed stack.
+        A very deeply nested document can exhaust it; the page will say so, and reloading
+        gives you a fresh module.
+      </li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>Bundled packages you can <code>@require:</code></summary>
+    <div id="packages"></div>
+  </details>
+</main>
+
+<script type="module">
+import { instantiateFromUrl } from "./rustyfi.js";
+import { EXAMPLES } from "./examples.js";
+
+const $ = (id) => document.getElementById(id);
+const sourceEl = $("source");
+const statusEl = $("status");
+const errorEl = $("error");
+const previewEl = $("preview");
+const placeholderEl = $("placeholder");
+const compileBtn = $("compile");
+
+let rustyfi = null;
+let fontBytes = null;
+let blobUrl = null;
+
+// Examples first, so the page is readable even if the module fails to load.
+for (const [i, ex] of EXAMPLES.entries()) {
+  const option = document.createElement("option");
+  option.value = String(i);
+  option.textContent = ex.name;
+  $("example").append(option);
+}
+sourceEl.value = EXAMPLES[0].source;
+$("example").addEventListener("change", (e) => {
+  sourceEl.value = EXAMPLES[Number(e.target.value)].source;
+});
+
+$("font").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  fontBytes = new Uint8Array(await file.arrayBuffer());
+  $("fontlabel").textContent = `Font: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
+});
+
+function showError(message) {
+  errorEl.textContent = message;
+  errorEl.style.display = "block";
+}
+
+function showPdf(bytes) {
+  if (blobUrl) URL.revokeObjectURL(blobUrl);
+  blobUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  previewEl.src = blobUrl;
+  previewEl.style.display = "block";
+  placeholderEl.style.display = "none";
+  // Some browsers (notably on mobile) will not render a PDF in an iframe at
+  // all, so always offer the file itself.
+  $("dl").innerHTML = "";
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = "document.pdf";
+  a.textContent = "download";
+  a.style.fontWeight = "400";
+  a.style.textTransform = "none";
+  $("dl").append("— ", a);
+}
+
+function typeset() {
+  if (!rustyfi) return;
+  errorEl.style.display = "none";
+  compileBtn.disabled = true;
+  statusEl.className = "";
+  statusEl.textContent = "typesetting…";
+
+  // Yield a frame so the button state and status actually paint before the
+  // module blocks the main thread. Compilation is synchronous inside wasm.
+  requestAnimationFrame(() => {
+    const started = performance.now();
+    const result = rustyfi.compile(sourceEl.value, fontBytes);
+    const ms = Math.round(performance.now() - started);
+    if (result.ok) {
+      showPdf(result.pdf);
+      statusEl.className = "ok";
+      statusEl.textContent = `typeset in ${ms} ms — ${(result.pdf.length / 1024).toFixed(1)} kB`;
+    } else {
+      statusEl.className = "";
+      statusEl.textContent = `failed in ${ms} ms`;
+      showError(result.error);
+    }
+    compileBtn.disabled = false;
+  });
+}
+
+compileBtn.addEventListener("click", typeset);
+sourceEl.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    typeset();
+  }
+});
+
+try {
+  rustyfi = await instantiateFromUrl("./rustyfi_wasm.wasm");
+  $("version").textContent = `v${rustyfi.version()}`;
+  const packages = rustyfi.packages();
+  $("packages").innerHTML = packages.map((p) => `<code>${p}</code>`).join("");
+  statusEl.textContent = `ready — ${packages.length} packages bundled`;
+  compileBtn.disabled = false;
+  typeset();
+} catch (e) {
+  statusEl.textContent = "failed to load";
+  showError(
+    `Could not load the WebAssembly module: ${e && e.message ? e.message : e}\n\n` +
+    "The page needs ./rustyfi_wasm.wasm alongside it, served over http(s) — " +
+    "opening index.html straight off the filesystem will not work, because " +
+    "module scripts and WebAssembly are both blocked on file:// URLs.",
+  );
+}
+</script>
+</body>
+</html>
