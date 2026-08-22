@@ -45,21 +45,33 @@
     background: var(--bg);
     color: var(--ink);
     font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    /* The editor and preview should own whatever height the viewport has, so
+       the page is a flex column and the panes take the slack rather than being
+       pinned to a guessed `vh`. */
+    min-height: 100vh; display: flex; flex-direction: column;
   }
   header {
-    padding: 1.1rem 1.25rem 0.9rem;
+    display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center;
+    padding: 0.5rem 1rem;
     border-bottom: 1px solid var(--line);
     background: var(--panel);
+    flex: none;
   }
-  h1 { margin: 0 0 0.2rem; font-size: 1.2rem; letter-spacing: -0.01em; }
-  h1 .v { color: var(--muted); font-weight: 400; font-size: 0.8rem; }
-  header p { margin: 0; color: var(--muted); font-size: 0.88rem; max-width: 62ch; }
-  main { padding: 1rem 1.25rem 2.5rem; max-width: 1400px; margin: 0 auto; }
-  .bar {
-    display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center;
-    margin-bottom: 0.85rem;
+  h1 {
+    margin: 0 0.5rem 0 0; font-size: 0.95rem; font-weight: 650;
+    letter-spacing: -0.01em; white-space: nowrap;
   }
-  .bar label { font-size: 0.85rem; color: var(--muted); }
+  h1 a { color: inherit; text-decoration: none; }
+  h1 a:hover { text-decoration: underline; }
+  h1 .v { color: var(--muted); font-weight: 400; font-size: 0.75rem; }
+  header label { font-size: 0.85rem; color: var(--muted); }
+  main {
+    padding: 0.75rem 1rem 1rem; max-width: 1400px; margin: 0 auto; width: 100%;
+    /* Take the leftover height and pass it down: `min-height: 0` is what lets a
+       flex child actually shrink below its content, without which the grid
+       overflows the viewport instead of filling it. */
+    flex: 1; display: flex; flex-direction: column; min-height: 0;
+  }
   select, button, .filebtn {
     font: inherit; font-size: 0.88rem;
     padding: 0.4rem 0.7rem;
@@ -72,32 +84,36 @@
   }
   button[disabled] { opacity: 0.55; cursor: progress; }
   .filebtn input { display: none; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: stretch; }
+  .grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: stretch;
+    flex: 1; min-height: 0;
+  }
   @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-  .pane { display: flex; flex-direction: column; min-width: 0; }
+  .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   .pane > h2 {
     margin: 0 0 0.4rem; font-size: 0.76rem; text-transform: uppercase;
     letter-spacing: 0.07em; color: var(--muted); font-weight: 600;
   }
   textarea {
-    width: 100%; height: 60vh; min-height: 340px; resize: vertical;
+    width: 100%; flex: 1; min-height: 240px; resize: none;
     padding: 0.8rem; border: 1px solid var(--line); border-radius: 9px;
     background: var(--panel); color: var(--ink);
     font-family: var(--mono); font-size: 13px; line-height: 1.5;
     tab-size: 2;
   }
   iframe {
-    width: 100%; height: 60vh; min-height: 340px;
+    width: 100%; flex: 1; min-height: 240px;
     border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
   }
   .empty {
-    height: 60vh; min-height: 340px; display: grid; place-items: center;
+    flex: 1; min-height: 240px; display: grid; place-items: center;
     border: 1px dashed var(--line); border-radius: 9px; color: var(--muted);
     font-size: 0.9rem; text-align: center; padding: 1rem;
   }
   #status { font-size: 0.85rem; color: var(--muted); margin-left: auto; }
   #status.ok { color: var(--ok); }
   pre#error {
+    flex: none;
     display: none; white-space: pre-wrap; word-break: break-word;
     margin: 1rem 0 0; padding: 0.85rem 1rem;
     background: var(--error-bg); color: var(--error-ink);
@@ -105,7 +121,8 @@
     font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
   }
   details {
-    margin-top: 1.5rem; border: 1px solid var(--line); border-radius: 9px;
+    flex: none;
+    margin-top: 1rem; border: 1px solid var(--line); border-radius: 9px;
     background: var(--panel); padding: 0.7rem 1rem;
   }
   details + details { margin-top: 0.6rem; }
@@ -123,28 +140,21 @@
 </head>
 <body>
 <header>
-  <h1>rustyfi playground <span class="v" id="version"></span></h1>
-  <p>
-    The <a href="https://github.com/yasuo-ozu/rustyfi">rustyfi</a> SATySFi typesetter,
-    compiled to WebAssembly. Your document is typeset entirely in this tab — nothing is
-    uploaded, and there is no server.
-  </p>
+  <h1><a href="https://github.com/yasuo-ozu/rustyfi">rustyfi</a> playground <span class="v" id="version"></span></h1>
+
+  <label for="example">Example</label>
+  <select id="example"></select>
+
+  <label class="filebtn" title="Overrides the bundled Junicode. Unlocks non-Latin text.">
+    <input type="file" id="font" accept=".ttf,.otf,font/ttf,font/otf">
+    <span id="fontlabel">Loading font…</span>
+  </label>
+
+  <button class="primary" id="compile" disabled>Typeset (Ctrl+Enter)</button>
+  <span id="status">loading the WebAssembly module…</span>
 </header>
 
 <main>
-  <div class="bar">
-    <label for="example">Example</label>
-    <select id="example"></select>
-
-    <label class="filebtn" title="Optional. Unlocks non-Latin text and the full stdja classes.">
-      <input type="file" id="font" accept=".ttf,.otf,font/ttf,font/otf">
-      <span id="fontlabel">Use a font from your machine…</span>
-    </label>
-
-    <button class="primary" id="compile" disabled>Typeset (Ctrl+Enter)</button>
-    <span id="status">loading the WebAssembly module…</span>
-  </div>
-
   <div class="grid">
     <section class="pane">
       <h2>Source</h2>
@@ -163,16 +173,14 @@
     <summary>What this build can and cannot do</summary>
     <ul>
       <li>
-        <strong>Fonts.</strong> By default it renders with the 14 standard PDF fonts, which
-        are WinAnsi Latin. <strong>Japanese and other non-Latin text will not
-        typeset</strong>, and neither will the full <code>stdja</code> /
-        <code>stdjabook</code> / <code>stdjareport</code> classes — their own page
-        furniture contains an em dash, which is already outside WinAnsi. Rather than
-        silently dropping such characters, the compiler refuses and tells you.
-        <strong>Pick a <code>.ttf</code>/<code>.otf</code> from your machine above and all
-        of that starts working</strong>, including CJK if the font has the glyphs. The font
-        never leaves your browser; bundling one here would have added megabytes to the page
-        load for everyone.
+        <strong>Fonts.</strong> <a href="./fonts/Junicode.ttf">Junicode</a> is served with
+        the page and loaded before the first typeset, so the <code>stdja</code> family works
+        out of the box. Without a real face the fallback is the 14 standard PDF fonts, which
+        are WinAnsi Latin — not even the em dash in <code>stdjabook</code>'s own page
+        furniture survives that, and rather than dropping such characters silently the
+        compiler refuses and says so. <strong>Junicode carries no CJK</strong>: for Japanese,
+        pick a <code>.ttf</code>/<code>.otf</code> above and it replaces the bundled one.
+        Whatever you pick never leaves your browser.
       </li>
       <li>
         <strong><code>@require:</code> works</strong>, against the bundled 0.0.6 package
