@@ -1,0 +1,38 @@
+# Cargo configuration for the playground workspace.
+#
+# Both settings below exist for one reason: elaboration and typechecking in
+# `rustyfi-lang` recurse over the MERGED program — a document plus every
+# package it `@require:`s, spliced into one nested-let chain — so recursion
+# depth follows the size of the library, not the size of the document. The
+# default stack in either environment is not enough for a real document class.
+
+[env]
+# Host-target unit tests (`cargo test -p rustyfi-wasm`) compile real documents
+# against the bundled corpus, and libtest sizes each test thread from
+# RUST_MIN_STACK — 2 MiB by default, close enough to the ceiling that survival
+# depends on the compiler's inlining decisions. The typesetter's own repository
+# sets this same floor for the same reason; it does not reach a workspace that
+# only path-depends on it, hence the copy.
+#
+# `force = true` because this is a correctness floor, not a preference: a stale
+# RUST_MIN_STACK in someone's shell should not be able to reintroduce a crash
+# that looks like a code bug. Stack is virtual and committed lazily, so the
+# ceiling costs address space, not memory.
+RUST_MIN_STACK = { value = "67108864", force = true }
+
+# THE BROWSER BUILD NEEDS THE SAME BIGGER STACK, BY A DIFFERENT LEVER.
+#
+# `wasm32-unknown-unknown` has no threads to size — the shadow stack is fixed at
+# LINK time, and wasm-ld's default is 1 MiB. At that size anything past a toy
+# document traps with `memory access out of bounds` deep inside
+# `typecheck::Checker::infer`, which reads like memory corruption and is really
+# just the stack running out.
+#
+# 32 MiB is measured, not guessed: it is the smallest power of two at which the
+# full `stdja`/`stdjabook` document classes typeset in the playground. Unlike a
+# native thread stack this is real linear memory rather than lazily-committed
+# address space, so it is not simply set to the 64 MiB used above.
+#
+# Scoped to the wasm target, so no host build sees it.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=33554432"]

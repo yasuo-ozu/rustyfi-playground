@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/rustyfi-wasm"]
+
+# `rustyfi/` is a git submodule that carries its OWN `[workspace]`. Cargo binds
+# a package to the nearest enclosing workspace root, so the typesetter's crates
+# already belong to that one and are only reached from here as path
+# dependencies. Saying so explicitly keeps the relationship from depending on
+# that lookup rule, and keeps a future glob member pattern from swallowing the
+# whole typesetter.
+exclude = ["rustyfi"]

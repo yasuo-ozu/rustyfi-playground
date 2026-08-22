@@ -1,0 +1,6 @@
+/target/
+
+# The Pages artifact `.github/workflows/pages.yml` assembles, and the wasm
+# module a local preview copies in beside `playground/index.html`.
+/_site/
+/playground/*.wasm

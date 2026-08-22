@@ -1,0 +1,4 @@
+[submodule "rustyfi"]
+	path = rustyfi
+	url = git@github.com:yasuo-ozu/rustyfi.git
+	branch = main
