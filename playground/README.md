@@ -6,8 +6,9 @@ package corpus and the font are all fetched once and everything after that is
 local. `.github/workflows/pages.yml` builds and publishes it to GitHub Pages.
 
 The single exception is the **Share** button, which is opt-in and says so on the
-page: it puts the document into a URL and asks [is.gd](https://is.gd/) to
-shorten it, which means the document goes to is.gd. Nothing calls out on load or
+page: it puts the document into a URL and asks a third-party shortener
+([TinyURL](https://tinyurl.com/), falling back to [is.gd](https://is.gd/)) to
+shorten it, which means the document goes to that service. Nothing calls out on load or
 on edit, only on that click, and if the service declines you get the long URL
 with a message telling you which one you got.
 
@@ -42,7 +43,7 @@ round-trip — and is what gates the deploy:
 $ node playground/selftest.mjs target/wasm32-unknown-unknown/release/rustyfi_wasm.wasm
 ```
 
-It stays offline on purpose. The is.gd leg is not exercised there, because a
+It stays offline on purpose. The shortener leg is not exercised there, because a
 deploy must not be gated on a third party being up.
 
 ## What is here

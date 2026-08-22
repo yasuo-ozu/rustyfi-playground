@@ -204,7 +204,7 @@
 
   <button class="primary" id="compile" disabled>Typeset (Ctrl+Enter)</button>
   <button id="share" disabled title="Copy a link that carries this document in its URL">Share</button>
-  <span class="hint">Shortening sends this document's link to is.gd.</span>
+  <span class="hint">Shortening sends this document's link to a URL shortener (TinyURL, then is.gd).</span>
   <span id="status">loading the WebAssembly module…</span>
 </header>
 
@@ -307,7 +307,8 @@ async function share() {
   statusEl.textContent = "building a link…";
   try {
     const long = shareUrl(window.location.href, await encodeSource(sourceEl.value));
-    // `shorten` returns null whenever is.gd declines or is unreachable. Which
+    // `shorten` returns null only when EVERY configured shortener declines or
+    // is unreachable. Which
     // link the user actually got has to be SAID: silently handing over a long
     // one after they asked for a short one is the failure worth avoiding here.
     const short = await shorten(long);

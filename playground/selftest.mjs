@@ -10,7 +10,7 @@
 import { readFile } from "node:fs/promises";
 import { instantiate } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
-import { decodeSource, encodeSource, shareUrl } from "./share.js";
+import { decodeSource, encodeSource, shareUrl, SHORTENERS } from "./share.js";
 import { PACKAGE_SETS, groupPackages } from "./packages.js";
 
 const wasmPath = process.argv[2];
@@ -205,8 +205,37 @@ for (const example of EXAMPLES) {
 //    document. CJK and the math examples are the interesting inputs, because
 //    both leave the ASCII range where a careless base64 would break.
 //
-//    The is.gd leg is deliberately NOT exercised here: a deploy must not be
-//    gated on a third-party service being up, and this test is offline.
+//    The network leg is deliberately NOT exercised here: a deploy must not be
+//    gated on a third-party service being up — is.gd was down for new links
+//    while this was written, which is exactly why there is more than one
+//    shortener and why the button degrades to the long URL. The list's SHAPE
+//    is checked below, offline, because a typo there fails identically to an
+//    outage and would be blamed on the outage.
+// The shortener list's shape, offline. A provider whose `endpoint` drops the
+// URL, or whose `parse` cannot read its own service's success body, fails the
+// same way a real outage does — and would be blamed on the outage.
+check("at least one shortener is configured", SHORTENERS.length > 0, "SHORTENERS is empty");
+for (const s of SHORTENERS) {
+  const probe = "https://example.com/?src=abc";
+  const url = typeof s.endpoint === "function" ? s.endpoint(probe) : "";
+  check(`shortener ${s.id}: endpoint carries the url`,
+    url.startsWith("https://") && url.includes(encodeURIComponent(probe)),
+    `endpoint() must embed the encoded URL, got ${url}`);
+  check(`shortener ${s.id}: parse rejects an error body`,
+    s.parse("Error, database insert failed") === null,
+    "a plain-text error body must parse as a decline, not a short URL");
+  check(`shortener ${s.id}: maxUrl is a sane positive number`,
+    Number.isFinite(s.maxUrl) && s.maxUrl > 100, `maxUrl = ${s.maxUrl}`);
+}
+check("tinyurl parses its own success body",
+  SHORTENERS.find((s) => s.id === "tinyurl.com")?.parse("https://tinyurl.com/abc123") ===
+    "https://tinyurl.com/abc123",
+  "the plain-text success shape must be recognised");
+check("is.gd parses its own success body",
+  SHORTENERS.find((s) => s.id === "is.gd")?.parse('{ "shorturl": "https://is.gd/AG3Hwv" }') ===
+    "https://is.gd/AG3Hwv",
+  "the JSON success shape must be recognised");
+
 const shareCases = [
   ["CJK", "@require: stdjabook\n% 日本語の組版。\ndocument (|title = {組版};|) '<\n  +p { 吾輩は猫である。 }\n>\n"],
   ...EXAMPLES.map((e) => [`example "${e.name}"`, e.source]),

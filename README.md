@@ -7,8 +7,9 @@ type a `.saty` document, the module typesets it, and the PDF appears beside it:
 for.
 
 The one exception is deliberate and opt-in: the **Share** button builds a URL
-that carries your document, and shortening that URL hands it to
-[is.gd](https://is.gd/). Nothing calls out on load or on edit — only on that
+that carries your document, and shortening that URL hands it to a third-party
+shortener ([TinyURL](https://tinyurl.com/), falling back to
+[is.gd](https://is.gd/)). Nothing calls out on load or on edit — only on that
 click, and the page says so next to the button.
 
 Live at <https://yasuo-ozu.github.io/rustyfi-playground/>.

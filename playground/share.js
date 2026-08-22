@@ -21,9 +21,47 @@ export const DEFLATED = "1";
 /// UTF-8 bytes, then base64url. The fallback when compression is unavailable.
 export const PLAIN = "0";
 
-/// is.gd refuses a URL longer than this, so there is no point in a request we
-/// already know will fail; the caller falls back to the long URL instead.
-export const SHORTENER_MAX_URL = 5000;
+/// The shorteners tried, in order, first success wins.
+///
+/// More than one because a single provider is a single point of failure, and
+/// this one failed: is.gd answered `Error, database insert failed` (HTTP 200,
+/// plain text) to every request regardless of length — a 113-character URL
+/// failed identically to a 2,703-character one — so it is not a length limit,
+/// a rate limit or a CORS problem. TinyURL was verified against the same long
+/// links and echoes `access-control-allow-origin` for this origin.
+///
+/// is.gd is kept as a fallback rather than deleted: it has worked before and
+/// presumably will again, and trying it costs one request only when the first
+/// provider has already declined.
+export const SHORTENERS = [
+  {
+    id: "tinyurl.com",
+    // Plain text: the short URL on success, a body containing "Error"
+    // otherwise. No length limit is documented; 8000 is the practical ceiling
+    // for a URL that still has to survive being pasted around.
+    maxUrl: 8000,
+    endpoint: (u) => `https://tinyurl.com/api-create.php?url=${encodeURIComponent(u)}`,
+    parse: (body) => (body.trim().startsWith("https://") ? body.trim() : null),
+  },
+  {
+    id: "is.gd",
+    maxUrl: 5000,
+    endpoint: (u) => `https://is.gd/create.php?format=json&url=${encodeURIComponent(u)}`,
+    parse: (body) => {
+      try {
+        const parsed = JSON.parse(body);
+        return typeof parsed.shorturl === "string" ? parsed.shorturl : null;
+      } catch {
+        // Its failure mode is plain text, not JSON, and not an HTTP error.
+        return null;
+      }
+    },
+  },
+];
+
+/// The longest URL any configured shortener will consider. Past this the
+/// caller need not ask at all.
+export const SHORTENER_MAX_URL = Math.max(...SHORTENERS.map((s) => s.maxUrl));
 
 const toBase64Url = (bytes) => {
   let binary = "";
@@ -81,26 +119,29 @@ export function shareUrl(here, param) {
   return url.toString();
 }
 
-/// Ask is.gd for a short URL.
+/// Ask each shortener in turn for a short URL.
 ///
-/// Resolves to `null` when it declines, which is a normal outcome rather than
-/// an error: the caller copies the long URL and says which one it copied.
+/// Resolves to `null` when they all decline, which is a normal outcome rather
+/// than an error: the caller copies the long URL and says which one it copied.
 ///
 /// **This is the one thing on the page that leaves the tab**, so it only ever
 /// runs from an explicit click — never on load, never on edit. The URL carries
 /// the document, so shortening does hand the document to a third party.
+///
+/// Every response is read as TEXT, never as JSON: these services answer HTTP
+/// 200 with a plain-text error, so `res.json()` would throw on exactly the
+/// case that has to be handled.
 export async function shorten(longUrl) {
-  if (longUrl.length > SHORTENER_MAX_URL) return null;
-  const endpoint = `https://is.gd/create.php?format=json&url=${encodeURIComponent(longUrl)}`;
-  try {
-    const res = await fetch(endpoint);
-    // is.gd answers HTTP 200 whatever happens, and an outage comes back as
-    // plain text ("Error, database insert failed") rather than as its
-    // documented `{errorcode, errormessage}` JSON — so a parse failure is one
-    // of the shapes to expect here, not an impossibility.
-    const body = await res.json();
-    return typeof body.shorturl === "string" ? body.shorturl : null;
-  } catch {
-    return null;
+  for (const service of SHORTENERS) {
+    if (longUrl.length > service.maxUrl) continue;
+    try {
+      const res = await fetch(service.endpoint(longUrl));
+      if (!res.ok) continue;
+      const short = service.parse(await res.text());
+      if (short) return short;
+    } catch {
+      // Unreachable, blocked, or CORS-refused: try the next one.
+    }
   }
+  return null;
 }
