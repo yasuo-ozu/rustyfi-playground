@@ -1,0 +1,37 @@
+[package]
+name = "rustyfi-wasm"
+description = "WebAssembly entry point for rustyfi: compile a SATySFi document to PDF bytes in the browser"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Yasuo Ozu <yasuo@ozu.email>"]
+repository = "https://github.com/yasuo-ozu/rustyfi-playground"
+homepage = "https://github.com/yasuo-ozu/rustyfi-playground"
+# The browser playground is deployed from this repository, not distributed as
+# a crate — every dependency below is a path into the `rustyfi/` submodule and
+# `build.rs` reads that submodule's package corpus, neither of which a
+# published `.crate` would carry.
+publish = false
+
+[lib]
+# `cdylib` is the loadable `.wasm`; `rlib` is what the host-target unit tests
+# (and any other Rust consumer) link against, so the pipeline this exposes is
+# testable without a browser.
+crate-type = ["cdylib", "rlib"]
+
+# Path dependencies into the `rustyfi/` submodule. The gitlink is what pins
+# WHICH typesetter the deployed playground is built from, so no version
+# requirement is stated here — a version would be a second, silently
+# disagreeing pin.
+[dependencies]
+rustyfi-syntax = { path = "../../rustyfi/crates/rustyfi-syntax" }
+# For `FontMetrics`, the trait the base-14 and TrueType metric sources share —
+# it is defined here, and neither `rustyfi-lang` nor `rustyfi-pdf` re-exports it.
+rustyfi-backend = { path = "../../rustyfi/crates/rustyfi-backend" }
+# `default-features = false` drops `pdf-image`, and with it `lopdf` ->
+# `rayon`/`rand`/`getrandom` + three date-time crates, none of which build for
+# `wasm32-unknown-unknown`. Nothing is lost: `load-pdf-image` takes a
+# filesystem path.
+rustyfi-lang = { path = "../../rustyfi/crates/rustyfi-lang", default-features = false }
+rustyfi-pdf = { path = "../../rustyfi/crates/rustyfi-pdf" }
+rustyfi-loader = { path = "../../rustyfi/crates/rustyfi-loader" }
