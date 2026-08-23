@@ -11,3 +11,7 @@
 /playground/fonts/
 /playground/licenses/LICENSE.LGPL-3.0.txt
 /playground/licenses/LICENSE.GPL-3.0.txt
+
+# The vendored editor is BUILT from here and COMMITTED under playground/vendor/,
+# so nothing in this directory is needed to serve the page.
+/editor/node_modules/

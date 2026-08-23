@@ -1,0 +1,19 @@
+{
+  "name": "rustyfi-playground-editor",
+  "private": true,
+  "type": "module",
+  "description": "Build tooling for the vendored CodeMirror 6 bundle the playground serves from its own origin.",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.18.0",
+    "@codemirror/commands": "^6.7.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/lint": "^6.8.0",
+    "@codemirror/state": "^6.4.0",
+    "@codemirror/view": "^6.34.0",
+    "@lezer/highlight": "^1.2.0",
+    "esbuild": "^0.24.0"
+  }
+}

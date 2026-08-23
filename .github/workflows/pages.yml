@@ -85,6 +85,11 @@ jobs:
         run: |
           mkdir -p _site/fonts
           cp playground/index.html playground/rustyfi.js playground/examples.js playground/share.js playground/packages.js _site/
+          # The editor. Committed rather than built here: the page fetches
+          # nothing at runtime, so CodeMirror is bundled into the repository by
+          # `editor/build.mjs` and served from this origin. No npm in the
+          # deploy path, and no CDN in the page.
+          cp -r playground/vendor _site/
           cp target/wasm32-unknown-unknown/release/rustyfi_wasm.wasm _site/
           cp rustyfi/lib-rustyfi/dist/fonts/Junicode.ttf _site/fonts/
           cp rustyfi/lib-rustyfi/dist/fonts/LICENSE-Junicode-OFL.txt _site/fonts/
