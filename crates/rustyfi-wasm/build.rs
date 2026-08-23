@@ -38,6 +38,11 @@ use std::path::{Path, PathBuf};
 static CORPUS_PACKAGES: &[(&str, &str, &str)] = &[
     ("base", "satysfi-base/src", "LICENSE-base-MIT.txt"),
     ("class-slydifi", "slydifi/src", "LICENSE-slydifi-MIT.txt"),
+    (
+        "code-printer",
+        "code-printer/src",
+        "LICENSE-code-printer-MIT.txt",
+    ),
     ("easytable", "easytable/src", "LICENSE-easytable-MIT.txt"),
     ("enumitem", "enumitem/src", "LICENSE-enumitem-MIT.txt"),
     ("figbox", "figbox/src", "LICENSE-figbox-MIT.txt"),

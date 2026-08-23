@@ -46,6 +46,15 @@ export const PACKAGE_SETS = [
     licenseHref: "./licenses/LICENSE-base-MIT.txt",
     what: "A collection of utility functions and modules for SATySFi.",
   },
+    {
+      prefix: "code-printer",
+      name: "satysfi-code-printer",
+      repo: "https://github.com/puripuri2100/satysfi-code-printer",
+      version: "v1.1.1",
+      license: "MIT",
+      licenseHref: "./licenses/LICENSE-code-printer-MIT.txt",
+      what: "Syntax highlighting for source listings, in 38 languages and 24 themes.",
+    },
   {
     prefix: "easytable",
     name: "satysfi-easytable",

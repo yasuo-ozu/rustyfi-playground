@@ -200,6 +200,50 @@ document (|
 `,
   },
   {
+    name: "Syntax highlighting (code-printer)",
+    needsFont: false,
+    source: `% code-printer highlights a source listing. It drives \`string-scan\`, a
+% regexp primitive whose absence used to stop the package loading at all.
+%
+% The colours are the theme's; the FOUR code faces it also asks for are not
+% bundled here, so keyword/identifier/string/comment share one face. The
+% highlighting is unaffected — only the typographic distinction is.
+
+@require: stdja-mini
+@require: code-printer/code-printer
+@require: code-printer/code-theme
+@require: code-printer/code-syntax
+
+document (|
+  title = {Syntax highlighting};
+  author = {};
+  show-title = false;
+  show-toc = false;
+|) '<
+  +p { Rust, in the \`basic-light\` theme: }
+  +code-printer ?:(
+    CodePrinter.make-config CodeSyntax.rust CodeTheme.basic-light
+  )(\`fn main() {
+    // greet, twice
+    let greeting = "hello";
+    for i in 0..2 {
+        println!("{} {}", greeting, i);
+    }
+}\`);
+
+  +p { The same listing as OCaml, in \`gruvbox-dark\`: }
+  +code-printer ?:(
+    CodePrinter.make-config CodeSyntax.ocaml CodeTheme.gruvbox-dark
+  )(\`let () =
+  (* greet, twice *)
+  let greeting = "hello" in
+  for i = 0 to 1 do
+    Printf.printf "%s %d\\n" greeting i
+  done\`);
+>
+`,
+  },
+  {
     name: "Tables (easytable)",
     needsFont: false,
     source: `% Adapted from easytable's own manual, layout-tests/corpus/easytable/doc/easytable.saty.
