@@ -35,3 +35,25 @@ rustyfi-backend = { path = "../../rustyfi/crates/rustyfi-backend" }
 rustyfi-lang = { path = "../../rustyfi/crates/rustyfi-lang", default-features = false }
 rustyfi-pdf = { path = "../../rustyfi/crates/rustyfi-pdf" }
 rustyfi-loader = { path = "../../rustyfi/crates/rustyfi-loader" }
+# The editor's fast tier: lex and parse diagnostics, positioned in UTF-16 code
+# units, for both generations. `default-features = false` is not an
+# optimisation here, it is what makes the crate usable at all — `server` pulls
+# in the stdio JSON-RPC loop and `rustyfi-loader`'s filesystem entry points,
+# and `typecheck` pulls in the whole-program tier that resolves a dependency
+# graph off a real disk. Neither has anything to read in a browser. What is
+# left is the crate's protocol-free half, whose only dependency is
+# `rustyfi-syntax` — already in this graph, so no new crate enters it.
+#
+# It is NOT free all the same: the module goes from 6,345,697 to 7,305,589
+# bytes (1.68 MiB to 1.89 MiB gzipped). Nothing here is redundant code that
+# could be trimmed by a feature flag — the crate's cursor half (`model`,
+# `walk006`, `walk01`, `features`, `symbols`) is already gone from the module,
+# dropped by the linker as unreachable. The growth is a SECOND
+# MONOMORPHIZATION of both grammars' `Parse` impls: they are generic in the
+# stream type, stable rustc does not share generic instantiations across
+# crates in a release build, and so `rustyfi-lsp` gets its own copy of what
+# `rustyfi-syntax::parse_file` already put here for the loader. Measured, not
+# assumed: with the `rustyfi_lsp::analyze` call alone removed the module is
+# 6,345,067 bytes. `lto = "thin"` does not merge them (7,309,273, and 73 s to
+# link), and wasm-ld here has no `--icf`.
+rustyfi-lsp = { path = "../../rustyfi/crates/rustyfi-lsp", default-features = false }

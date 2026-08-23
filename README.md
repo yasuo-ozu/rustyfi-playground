@@ -5,7 +5,8 @@ SATySFi typesetter — compiled to WebAssembly and running in a browser tab. You
 type a `.saty` document, the module typesets it, and the PDF appears beside it:
 **typesetting never leaves the tab**, and there is no package manager to reach
 for. Mistakes are underlined in the editor as you type, without waiting for a
-typeset — see
+typeset — the same `rustyfi-lsp` analysis a desktop editor gets, backed by a
+whole-program check the browser can run because the corpus is compiled in. See
 [Live diagnostics](playground/README.md#live-diagnostics).
 
 The one exception is deliberate and opt-in: the **Share** button builds a URL

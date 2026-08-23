@@ -44,9 +44,32 @@ layers share every declaration that decides where a character lands
 (`#editor .layer`), which is what keeps a wavy underline on the right character
 of a soft-wrapped line of Japanese.
 
-Analysis runs on the module's own `rustyfi_diagnostics` export — a compile with
-no rendering and no font, which is between 3 and 620 ms on the examples this
-page ships — **debounced by 600 ms** after the last keystroke. That is longer
+Analysis runs on the module's own `rustyfi_diagnostics` export, which is **two
+tiers**:
+
+1. **`rustyfi_lsp::analyze`** — the typesetter's own language server, minus the
+   protocol. It lexes and parses under the chosen generation and stops there:
+   no packages are resolved, nothing is compiled, and the span it reports is
+   the token the parse could not get past. Well under a millisecond on
+   anything this page ships.
+2. **the whole program**, and only when the first tier is silent — a compile
+   with no rendering and no font, between 1 and 530 ms on the examples here.
+
+The second tier is not a leftover. `rustyfi_lsp::analyze` deliberately stops at
+parsing, because a *detached buffer* has no program behind it and every name a
+real document imports would come back unbound; the crate's answer to that is
+`rustyfi_lsp::project::check`, which resolves the buffer's dependency graph off
+a disk and so cannot exist in a browser. This module already *is* that program
+— the whole corpus is compiled into it — so tier 2 here is the browser's
+counterpart of `project::check`, and it is what keeps `unbound variable`,
+`cannot resolve @require:` and the cross-version refusals underlined as you
+type.
+
+Ordering them this way is what makes the pair cheap: a document that does not
+parse cannot be compiled anyway, and a document that does not parse is the
+normal state of one being typed into.
+
+The whole thing is **debounced by 600 ms** after the last keystroke. That is longer
 than the gap between keystrokes of anyone typing continuously, so a burst costs
 one analysis rather than one per character, and short enough that pausing to
 look at the screen produces an answer. Everything here is on the main thread,
@@ -68,13 +91,25 @@ UTF-16 columns genuinely differ.
 
 Two honest limitations, both stated on the page itself:
 
-- **It reports the first problem, not every problem.** The analysis behind it
-  is a compile, and a compile stops. `crates/rustyfi-wasm/src/diagnostics.rs`
-  says so at length; when the typesetter grows a real `rustyfi-lsp`, `analyze`
-  in that file is the one function that changes and nothing else here moves.
+- **It reports the first problem, not every problem.** Both tiers stop at the
+  first thing they cannot get past: this port's parser has no error recovery,
+  and a compile stops. The `Vec` is the shape `rustyfi_lsp` chose so that
+  adding recovery later would not be a breaking change.
 - **A failure it cannot place in your document gets no underline** — a problem
   inside a bundled package, or one the compiler reported without a position.
   It is listed against the document as a whole instead of guessing a line.
+  This is a tier-2 limitation only; tier 1's spans are exact, and a
+  zero-width one (an unexpected end of input) is widened so there is still a
+  character to draw under.
+
+The crate's other protocol-free features — `hover`, `definition`,
+`completions`, `document_symbols` — are **deliberately not wired up**. They are
+single-file scoped by design, and a playground document is almost entirely
+package vocabulary. Measured across the 24 examples this page ships: hover
+answers at a median 20% of cursor positions, go-to-definition at 5%, and
+completions return nothing at all on 13 of the 24. An outline would be one or
+two entries on 14 of them. A popup that is empty four times out of five is
+worse than no popup.
 
 ## Checking it without a browser
 

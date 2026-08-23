@@ -389,6 +389,13 @@ for (const [name, text] of shareCases) {
 //     unusable. Positions are zero-based and count UTF-16 code units, so they
 //     are checked against `String.prototype.slice` — the same units a
 //     `textarea` uses, which is the whole point of reporting them that way.
+//
+//     TWO TIERS stand behind `rustyfi_diagnostics`: `rustyfi_lsp::analyze`
+//     (lex + parse, no packages, no compile) and, only when that is silent,
+//     the whole-program compile against the bundled corpus. They fail in
+//     completely different ways, so the checks below say which tier each one
+//     is about — a regression that took out one of them entirely would
+//     otherwise hide behind the other's passing checks.
 {
   const CLEAN = `@require: stdja-mini
 document (|title = {t}; author = {a};|) '<
@@ -402,58 +409,97 @@ document (|title = {t}; author = {a};|) '<
 
   // Every field the page reads is present and of the right kind — a missing
   // `endCharacter` would silently produce a zero-width, invisible marker.
+  // All four LSP severities are accepted because `rustyfi_lsp::Severity` has
+  // four; only `error` is emitted today, and `#diags button` styles every row
+  // as one, so a spelling the CSS does not know would be a silent mis-render
+  // rather than a crash.
   const shape = (d) =>
     ["line", "character", "endLine", "endCharacter"].every((k) => Number.isInteger(d[k])) &&
     typeof d.message === "string" && d.message.length > 0 &&
-    (d.severity === "error" || d.severity === "warning");
+    ["error", "warning", "information", "hint"].includes(d.severity);
 
-  // A syntax error, at the line it is on. Line 4 of the source (`>>>`), which
-  // is index 3 zero-based — getting THAT wrong by one is the classic way this
-  // feature ships broken.
-  const syntax = rustyfi.diagnostics(`@require: stdja-mini
+  // Absolute UTF-16 offsets, exactly as the page's own `rangeOf` computes
+  // them. A range that ENDS on the following line is still a range; comparing
+  // `endCharacter` to `character` alone would call it empty.
+  const spanOf = (text, d) => {
+    const lines = text.split("\n");
+    const startOf = (l) => lines.slice(0, l).reduce((n, s) => n + s.length + 1, 0);
+    return [startOf(d.line) + d.character, startOf(d.endLine) + d.endCharacter];
+  };
+
+  // TIER 1: a syntax error, at the line it is on. Line 4 of the source
+  // (`>>>`), which is index 3 zero-based — getting THAT wrong by one is the
+  // classic way this feature ships broken.
+  //
+  // `>>>` closes the document and then runs out of input looking for the right
+  // operand of a `>`, so the raw failure is ZERO-WIDTH at end of file. The
+  // compile-derived stand-in reported that verbatim and the page drew nothing
+  // at all; `rustyfi_lsp` widens a degenerate span so there is a character to
+  // underline. That is what the range check below is really pinning.
+  const SYNTAX = `@require: stdja-mini
 document (|title = {t}; author = {a};|) '<
   +p { hi }
 >>>
-`);
+`;
+  const syntax = rustyfi.diagnostics(SYNTAX);
   check("a syntax error yields exactly one diagnostic",
     syntax.ok && syntax.diagnostics.length === 1,
     syntax.ok ? JSON.stringify(syntax.diagnostics) : syntax.error);
   if (syntax.ok && syntax.diagnostics.length === 1) {
     const d = syntax.diagnostics[0];
+    const [from, to] = spanOf(SYNTAX, d);
     check("the diagnostic has every field the page reads", shape(d), JSON.stringify(d));
     check("the syntax error is on the line it is written on (zero-based 3)",
       d.line === 3, `line ${d.line}`);
-    check("the syntax error has a non-empty range", d.endCharacter > d.character,
-      `${d.character}-${d.endCharacter}`);
+    check("the syntax error has a non-empty range", to > from,
+      `offsets ${from}-${to} from ${JSON.stringify(d)}`);
     check("the position is not repeated in the message", !/^line \d+, character/.test(d.message),
       d.message);
+    // The payload used to be `format!("{err:?}")` over syan's whole error
+    // tree: a second and third copy of the position, in byte offsets, inside
+    // a nested `Span { start: Loc { .. } }`. It must not come back.
+    check("the message is prose, not a Debug dump",
+      !/Loc \{|span:|Expected \{/.test(d.message), d.message);
   }
 
-  // THE UTF-16 CHECK. A byte offset would put this marker 14 characters too
-  // far right — one extra position per Japanese character before it — and it
-  // would be wrong on exactly the documents this playground exists to show.
-  const cjkLine = "let s = `吾輩は猫である` in let y = nosuchvariable in";
-  const CJK = `@require: stdja-mini\n${cjkLine}\ndocument (|title = {t}; author = {a};|) '<\n  +p { hi }\n>\n`;
-  const cjk = rustyfi.diagnostics(CJK);
-  check("a CJK document analyses", cjk.ok && cjk.diagnostics.length === 1,
-    cjk.ok ? JSON.stringify(cjk.diagnostics) : cjk.error);
-  if (cjk.ok && cjk.diagnostics.length === 1) {
-    const d = cjk.diagnostics[0];
-    const want = cjkLine.indexOf("nosuchvariable");
-    check("a column after Japanese text is in UTF-16 units, not bytes",
-      d.line === 1 && d.character === want,
-      `got ${d.line}:${d.character}, want 1:${want} (byte offset would be ` +
-      `${Buffer.byteLength(cjkLine.slice(0, want), "utf8")})`);
-    // …and the range, sliced out of the JS string with those numbers, is the
-    // text the message is about. This is what the editor's underline covers.
-    check("the range slices out exactly the offending token",
-      CJK.split("\n")[d.line].slice(d.character, d.endCharacter) === "nosuchvariable",
-      JSON.stringify(CJK.split("\n")[d.line].slice(d.character, d.endCharacter)));
-    // The fixture has to be able to tell the two apart, or the check above
+  // THE UTF-16 CHECK, on BOTH tiers. A byte offset would put these markers
+  // fourteen characters too far right — one extra position per Japanese
+  // character before them — and it would be wrong on exactly the documents
+  // this playground exists to show. The two tiers compute the column by
+  // completely different routes (a byte-keyed line index in `rustyfi_lsp`,
+  // a re-read of the line for a compiler message), so a regression in either
+  // would be invisible in the other's check.
+  const cjkPrefix = "let s = `吾輩は猫である` in ";
+  const utf16Check = (tier, line, needle, lang = 0) => {
+    const src =
+      `@require: stdja-mini\n${line}\ndocument (|title = {t}; author = {a};|) '<\n  +p { hi }\n>\n`;
+    const out = rustyfi.diagnostics(src, lang);
+    check(`${tier}: a CJK document analyses to one diagnostic`,
+      out.ok && out.diagnostics.length === 1,
+      out.ok ? JSON.stringify(out.diagnostics) : out.error);
+    if (!out.ok || out.diagnostics.length !== 1) return;
+    const d = out.diagnostics[0];
+    const want = line.indexOf(needle);
+    const bytes = Buffer.byteLength(line.slice(0, want), "utf8");
+    // The fixture has to be able to tell the two apart, or the check below
     // passes for the wrong reason.
-    check("the CJK fixture really distinguishes bytes from UTF-16",
-      Buffer.byteLength(cjkLine.slice(0, want), "utf8") !== want);
-  }
+    check(`${tier}: the CJK fixture really distinguishes bytes from UTF-16`,
+      bytes !== want, `both are ${want}`);
+    check(`${tier}: a column after Japanese text is in UTF-16 units, not bytes`,
+      d.line === 1 && d.character === want,
+      `got ${d.line}:${d.character}, want 1:${want} (a byte offset would be ${bytes})`);
+    // …and the range, sliced out of the JS string with those numbers, starts
+    // at the text the message is about. This is what the underline covers.
+    check(`${tier}: the range starts at the offending token`,
+      src.split("\n")[d.line].slice(d.character).startsWith(needle),
+      JSON.stringify(src.split("\n")[d.line].slice(d.character, d.character + 20)));
+  };
+  // Tier 1: `@@` is not a token in either generation, so the lexer stops on
+  // it — after the Japanese, which is the whole point of the fixture.
+  utf16Check("parse tier", `${cjkPrefix}@@`, "@@");
+  // Tier 2: an unbound name. Parsing has nothing to say about it; only the
+  // whole program does, which is why this tier is still here.
+  utf16Check("program tier", `${cjkPrefix}let y = nosuchvariable in`, "nosuchvariable");
 
   // A failure with no place in THIS document — an unresolvable `@require:` —
   // must not be pinned to a line, or the editor underlines an innocent one.
@@ -466,6 +512,30 @@ document (|title = {t}; author = {a};|) '<
     check("a diagnostic with nowhere to go has an empty range",
       d.line === 0 && d.character === 0 && d.endCharacter === 0, JSON.stringify(d));
     check("…and still names the package", d.message.includes("no-such-package"), d.message);
+  }
+
+  // THE ORDER OF THE TIERS. A document that both fails to parse and names a
+  // package that does not exist reports the SYNTAX — that is what the author
+  // is looking at, and the package name is very likely a casualty of the same
+  // half-finished edit. Repairing only the syntax then surfaces the package.
+  //
+  // Read this for what it is: `rustyfi_loader::load` also parses the entry
+  // before resolving a header (it cannot find a header otherwise), so this
+  // would pass with the parse tier removed. It pins the ORDER the page relies
+  // on, not the existence of the tier.
+  {
+    const both = "@require: no-such-package\ndocument (|title = {t}; author = {a};|) '<\n" +
+      "  +p { hi }\n>>>\n";
+    const first = rustyfi.diagnostics(both);
+    check("a document with both a syntax error and a bad @require: reports the syntax",
+      first.ok && first.diagnostics.length === 1 &&
+        !first.diagnostics[0].message.includes("no-such-package"),
+      first.ok ? JSON.stringify(first.diagnostics) : first.error);
+    const then = rustyfi.diagnostics(both.replace(">>>", ">"));
+    check("…and repairing the syntax surfaces the package",
+      then.ok && then.diagnostics.length === 1 &&
+        then.diagnostics[0].message.includes("no-such-package"),
+      then.ok ? JSON.stringify(then.diagnostics) : then.error);
   }
 
   // The generation is respected: the same 0.1 source is clean as 0.1 and not

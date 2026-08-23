@@ -70,8 +70,14 @@
 //! where", as positioned JSON an editor can place. It is a separate entry
 //! point from [`rustyfi_compile`] because it does strictly less work — no
 //! rendering, no font — which is what makes it cheap enough to run on a pause
-//! in typing. See the [`diagnostics`] module for the honest account of how
-//! much analysis is behind it today.
+//! in typing.
+//!
+//! Two tiers stand behind it: `rustyfi_lsp::analyze`, the typesetter's own
+//! language server's protocol-free half, which lexes and parses; and, only
+//! when that is silent, the whole-program check below. See the
+//! [`diagnostics`] module for why both are here — the short version is that
+//! the LSP crate's own second tier resolves a dependency graph off a disk,
+//! and [`EmbeddedCorpus`] is what a browser has instead.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -717,8 +723,11 @@ pub unsafe extern "C" fn rustyfi_compile_with_font_lang(
 /// not UTF-8); it never means "the document has errors", which is a successful
 /// `Output` carrying a non-empty array.
 ///
-/// See [`diagnostics::analyze`] for what this currently is: one diagnostic
-/// derived from a compile, not a full analysis.
+/// At most one diagnostic comes back, because both tiers behind
+/// [`diagnostics::analyze`] stop at the first thing they cannot get past. The
+/// array is the shape `rustyfi_lsp` chose so that adding error recovery would
+/// not be a breaking change, and the page says as much under its problems
+/// list.
 ///
 /// # Safety
 /// `src` must point to at least `len` readable bytes for the duration of the

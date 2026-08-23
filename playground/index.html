@@ -635,10 +635,16 @@ function typeset() {
 // LIVE DIAGNOSTICS
 //
 // The module analyses a document without typesetting it (no rendering, no
-// font), which on every example this page ships takes between 3 and 620 ms —
-// measured, with the heaviest being the xpath logo. That is fast enough to run
-// on a pause in typing and much too slow to run on a keystroke, so it is
-// debounced.
+// font), in two tiers: the typesetter's own language server parses it, and
+// only if that is silent is the whole program compiled. Which tier answers
+// decides the cost, and the two are three orders of magnitude apart — under a
+// millisecond for a parse, up to 530 ms for a compile of the xpath logo,
+// measured on the examples this page ships.
+//
+// A buffer being typed into is USUALLY mid-construct and so usually answered
+// by the first tier, which is why the debounce below is a floor rather than
+// the whole story: what it protects against is the pause landing on a document
+// that does parse.
 //
 // 600 ms, chosen against those two numbers: comfortably longer than the gap
 // between keystrokes of anyone typing continuously (so a burst of typing costs

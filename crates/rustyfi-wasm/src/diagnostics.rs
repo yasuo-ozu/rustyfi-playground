@@ -1,92 +1,131 @@
 //! Live diagnostics for an editor — the useful half of a language server,
 //! without the protocol.
 //!
-//! # What this is, honestly
+//! # Two tiers, and why there are still two
 //!
-//! [`analyze`] is the seam. Its CONTRACT is the one a real analysis would
-//! satisfy: a list of positioned diagnostics over one source string, positions
-//! zero-based, characters counted in **UTF-16 code units** so they drop
-//! straight into a browser `textarea` (`setSelectionRange`, and the character
-//! cells of a mirrored overlay).
+//! [`analyze`] is the seam the browser side was written against, and its
+//! contract has not moved: a list of positioned diagnostics over one source
+//! string, positions zero-based, characters counted in **UTF-16 code units**
+//! so they drop straight into a `textarea` (`setSelectionRange`, and the
+//! character cells of a mirrored overlay).
 //!
-//! Its current IMPLEMENTATION does not satisfy the spirit of that contract, and
-//! nothing here pretends otherwise: it **compiles the document and turns the
-//! one error the compiler stopped at into one diagnostic**. So it reports the
-//! FIRST problem and no others, it has no notion of a warning, and it says
-//! nothing at all about a document that compiles. That is genuinely useful —
-//! a syntax slip or an unbound name is positioned in the editor while you
-//! type, rather than after you press Typeset — but it is not an analysis, and
-//! the count it produces is never evidence that a document has exactly one
-//! problem.
+//! What has moved is what stands behind it. [`Diag`] and [`Severity`] are no
+//! longer declared here — they are `rustyfi_lsp`'s own, re-exported — and the
+//! first thing [`analyze`] does is ask that crate:
 //!
-//! When `rustyfi-lsp` lands in the typesetter and the submodule pin moves,
-//! **[`analyze`] is the only function that changes**: its body becomes a call
-//! to that crate's own `analyze`, mapping its `Diag` onto this one. Everything
-//! else here — the JSON encoding, the C ABI export in `lib.rs`, and the whole
-//! browser side — is written against [`Diag`] and needs no edit. The
-//! compile-derived path below ([`from_compile_error`] and its helpers) is then
-//! deletable in one piece.
+//! 1. **`rustyfi_lsp::analyze`** — lex and parse, under the chosen generation.
+//!    No filesystem, no packages, no compile. Sub-millisecond on every
+//!    document this playground ships, and its span is the token the parse
+//!    could not get past rather than a position scraped out of a message.
+//! 2. **the whole program**, but only when the first tier is silent. The
+//!    document is loaded against the bundled corpus and taken through
+//!    elaborate → typecheck → evaluate ([`crate::check_lang`]), and the one
+//!    error the compiler stopped at becomes one diagnostic.
+//!
+//! The second tier is deliberately kept, and it is worth saying why, because
+//! the note this module used to carry predicted it would be deleted.
+//! `rustyfi_lsp::analyze` **stops at parsing, on purpose** — a detached buffer
+//! has no program behind it, so every name a real document imports
+//! (`document`, `\emph`, `+p`, `List.map`) would be an unbound variable and
+//! the one real error would drown. The crate's answer to that is
+//! `rustyfi_lsp::project::check`, which supplies the missing program by
+//! resolving the buffer's dependency graph off the disk — and which is
+//! therefore absent from a `wasm32` build.
+//!
+//! But this shim already *is* that program: [`crate::EmbeddedCorpus`] serves
+//! the whole resolved dependency graph out of memory, which is the one thing a
+//! browser has that a detached editor buffer does not. So tier 2 here is not a
+//! leftover stand-in for tier 1; it is the wasm-side counterpart of
+//! `project::check`, and dropping it would have taken `unbound variable`,
+//! `cannot resolve @require:` and every cross-version refusal off the page —
+//! the three mistakes a visitor picking packages out of a panel is most likely
+//! to make.
+//!
+//! Ordering the two this way is what makes the pair cheap. A document that
+//! does not parse cannot be compiled anyway, so tier 1 answers it for the
+//! price of a lex; and a document that does not parse is the *normal* state of
+//! a buffer being typed into. Only a syntactically complete document pays for
+//! tier 2.
+//!
+//! # What each tier can and cannot say
+//!
+//! Neither tier reports more than one diagnostic: this port's parser stops at
+//! the first failure, and so does its compiler. The `Vec` is the shape both
+//! crates chose so that error recovery would not be a breaking change, and the
+//! page says so out loud under the problems list.
+//!
+//! Tier 1's position is exact — a byte span from the stream's own high-water
+//! mark, converted through `rustyfi_lsp::LineIndex`. Tier 2's is *derived*, by
+//! reading `line L, characters A-B` back out of a message ([`scan_span`]), and
+//! it is honest about the cases where that cannot be attributed to the entry
+//! document at all: see [`entry_span`], which declines rather than guess.
 //!
 //! # Positions
 //!
-//! The typesetter's own diagnostics quote a [`rustyfi_syntax::Span`], whose
-//! `Display` is `line L, characters A-B` (or, across lines, `line L1,
-//! character A to line L2, character B`). `L` is 1-based and `A`/`B` count
-//! **Unicode scalars**, not bytes and not UTF-16 code units — `lexer.rs`'s
-//! `bump` advances `col` once per `char`. So the port's own numbers are
-//! already immune to the byte-offset trap that would misplace every marker in
-//! a Japanese document; what is left is the astral plane, where one scalar is
-//! TWO UTF-16 units. [`utf16_column`] does that conversion by re-reading the
-//! line, which is also what clamps a column the source cannot actually have.
+//! Tier 2's numbers come from a [`rustyfi_syntax::Span`], whose `Display` is
+//! `line L, characters A-B` (or, across lines, `line L1, character A to line
+//! L2, character B`). `L` is 1-based and `A`/`B` count **Unicode scalars**,
+//! not bytes and not UTF-16 code units — `lexer.rs`'s `bump` advances `col`
+//! once per `char`. So the port's own numbers are already immune to the
+//! byte-offset trap that would misplace every marker in a Japanese document;
+//! what is left is the astral plane, where one scalar is TWO UTF-16 units.
+//! [`utf16_column`] does that conversion by re-reading the line, which is also
+//! what clamps a column the source cannot actually have.
+//!
+//! Tier 1 needs none of that — `rustyfi_lsp` works in byte offsets internally
+//! and converts once, at the end, through an index built over the same buffer.
 
 use crate::Lang;
 
-/// How loud a diagnostic is.
+/// One positioned diagnostic over the document being edited, and how loud it
+/// is.
 ///
-/// `Warning` is unreachable from the compile-derived path below — the compiler
-/// either produces a document or stops — and exists because the analysis this
-/// is a stand-in for will produce them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    Error,
-    Warning,
-}
-
-impl Severity {
-    /// The JSON spelling, which is also the CSS class the page styles on.
-    fn as_str(self) -> &'static str {
-        match self {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-        }
-    }
-}
-
-/// One positioned diagnostic over the document being edited.
+/// **`rustyfi_lsp`'s own types**, not a copy of them. This module used to
+/// declare a `Diag` of exactly these six fields with exactly these units,
+/// written against a crate that did not exist yet; when it landed, the two
+/// declarations turned out to agree field for field, so keeping a second one
+/// here would only have been something to let drift.
 ///
-/// Both positions are zero-based, and both columns count UTF-16 code units.
-/// The range is half-open, as an editor selection is: `character` is the first
-/// unit covered, `end_character` the first not covered.
+/// `Severity` is the one place the two shapes differed: the local copy had
+/// `Error` and `Warning`, the real one also has `Information` and `Hint`.
+/// [`severity_str`] spells all four, and nothing in this build emits anything
+/// but `Error` today.
+///
+/// Both positions are zero-based, both columns count UTF-16 code units, and
+/// the range is half-open, as an editor selection is.
 ///
 /// A diagnostic the analysis cannot pin to a place in THIS document — a
 /// failure inside a bundled package, or one the compiler reported with no span
 /// at all — is placed at the very start (all four fields `0`), which is what
-/// a language server does with a whole-file problem.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diag {
-    pub line: u32,
-    pub character: u32,
-    pub end_line: u32,
-    pub end_character: u32,
-    pub severity: Severity,
-    pub message: String,
+/// a language server does with a whole-file problem, and which the page draws
+/// as a row with no underline.
+pub use rustyfi_lsp::{Diag, Severity};
+
+/// The JSON spelling of a severity, which is also the CSS class the page
+/// styles on.
+fn severity_str(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+        Severity::Information => "information",
+        Severity::Hint => "hint",
+    }
 }
 
 /// Analyse `source` as `lang`, returning every diagnostic found.
 ///
-/// **This is the one function to replace when `rustyfi-lsp` lands.** See the
-/// module comment for what the current body actually does and does not do.
+/// Parse first, compile only if that was silent — see the module comment for
+/// why both tiers are here and why this order is the cheap one.
 pub fn analyze(source: &str, lang: Lang) -> Vec<Diag> {
+    // Tier 1. `analyze`, not `analyze_auto`: the generation is not a guess
+    // here, it is what the reader picked in the header's Lang selector, and
+    // silently analysing 0.1 source under 0.0.6 because it happens to parse
+    // would disagree with the Typeset button standing next to it.
+    let parsed = rustyfi_lsp::analyze(source, lang.to_version());
+    if !parsed.is_empty() {
+        return parsed;
+    }
+    // Tier 2.
     match crate::check_lang(source, lang) {
         Ok(()) => Vec::new(),
         Err(raw) => vec![from_compile_error(source, &raw)],
@@ -99,7 +138,7 @@ pub fn analyze_json(source: &str, lang: Lang) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Everything below is the compile-derived stand-in, and goes away with it.
+// Tier 2: one diagnostic, derived from the compiler's own message.
 // ---------------------------------------------------------------------------
 
 /// A position as the port's own diagnostics spell it: `(line, column,
@@ -122,103 +161,39 @@ fn from_compile_error(source: &str, raw: &str) -> Diag {
         end_line,
         end_character,
         severity: Severity::Error,
-        message: tidy(&crate::for_a_reader(raw)),
+        message: tidy(&crate::for_a_reader(raw)).to_string(),
     }
 }
 
-/// Drop from a compiler message the two things an editor is already showing
-/// or does not want.
+/// Drop from a compiler message the leading position the editor is already
+/// showing.
 ///
-/// * **The leading position.** `line 4, characters 1-3: parse error: …` is how
-///   the message reads when it is the only output of a command-line run. Here
-///   the position is the [`Diag`]'s own, rendered by the editor next to the
-///   underline it drew, so repeating it in the text is noise. Only a LEADING
-///   position is stripped, and only when a `: ` follows it — a position quoted
-///   mid-sentence is part of what the message is saying.
-/// * **An embedded `Debug`-rendered span.** A parse failure's payload is
-///   syan's own `ParseError`, formatted with `{:?}`, so a message that already
-///   says "line 4, characters 1-3" goes on to say `Expected { span: Span {
-///   start: Loc { line: 4, col: 1, byte: 77 }, end: … }, what: "end of input" }`.
-///   The byte offsets are the same position a third time. Removing the group
-///   leaves `Expected { what: "end of input" }`, which is short enough to read
-///   in a list.
+/// `line 4, characters 1-3: unbound variable 'x'` is how the message reads
+/// when it is the only output of a command-line run. Here the position is the
+/// [`Diag`]'s own, rendered by the editor next to the underline it drew, so
+/// repeating it in the text is noise. Only a LEADING position is stripped, and
+/// only when a `: ` follows it — a position quoted mid-sentence is part of
+/// what the message is saying.
 ///
 /// Deliberately NOT applied to the Typeset pane's copy of the same message:
 /// there the position is all the reader has, since nothing underlines it.
-fn tidy(message: &str) -> String {
-    let message = strip_leading_position(message).unwrap_or(message);
-    strip_debug_spans(message)
+///
+/// This used to strip a second thing as well — an embedded `Debug`-rendered
+/// span, because a parse failure's payload was `format!("{err:?}")` over
+/// syan's whole error tree and read `Expected { span: Span { start: Loc {
+/// line: 4, col: 1, byte: 77 }, .. }, what: "end of input" }`. Two separate
+/// changes in the typesetter removed the need for it: parse failures are now
+/// reduced to one located, one-line message by `rustyfi_syntax::
+/// parse_error::locate`, and in any case a parse failure no longer reaches
+/// this tier at all, because tier 1 answers first.
+fn tidy(message: &str) -> &str {
+    strip_leading_position(message).unwrap_or(message)
 }
 
 /// `message` without a leading `line …: `, if it has one.
 fn strip_leading_position(message: &str) -> Option<&str> {
     let (_, rest) = span_at(message.strip_prefix("line ")?)?;
     rest.strip_prefix(": ")
-}
-
-/// `message` with every `span: <Type> { … }` field removed, braces balanced.
-///
-/// Written as a scan rather than a pattern because the group nests (`Span {
-/// start: Loc { .. } }`) and because a message with no such field — which is
-/// most of them — must come back untouched.
-fn strip_debug_spans(message: &str) -> String {
-    let mut out = String::with_capacity(message.len());
-    let mut rest = message;
-    while let Some(at) = rest.find("span: ") {
-        let after = &rest[at..];
-        match balanced_group_len(after) {
-            Some(len) => {
-                out.push_str(&rest[..at]);
-                // The field separator that follows it goes too, so the
-                // remaining struct does not read `Expected { , what: .. }`;
-                // and when the span was the ONLY field, the now-empty braces
-                // are normalized to `{ }` rather than `{  }`.
-                let tail = &after[len..];
-                let tail = tail.strip_prefix(", ").unwrap_or(tail);
-                if tail.trim_start().starts_with('}') {
-                    while out.ends_with(' ') || out.ends_with(',') {
-                        out.pop();
-                    }
-                    out.push(' ');
-                    rest = tail.trim_start();
-                } else {
-                    rest = tail;
-                }
-            }
-            None => {
-                out.push_str(&rest[..at + "span: ".len()]);
-                rest = &after["span: ".len()..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-/// The byte length of a `span: <Type> { … }` field starting at `s`, braces
-/// balanced. `None` if there is no `{` before the next `,` or if the braces
-/// never close.
-fn balanced_group_len(s: &str) -> Option<usize> {
-    let open = s.find('{')?;
-    if s[..open].contains(',') {
-        return None;
-    }
-    let mut depth = 0usize;
-    // Byte indices from `open` onward — `skip(open)` would skip that many
-    // CHARACTERS, which is not the same thing once a message quotes CJK.
-    for (i, c) in s[open..].char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(open + i + 1);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// The zero-based, UTF-16 range `raw` reports **in the entry document**, if it
@@ -237,9 +212,9 @@ fn balanced_group_len(s: &str) -> Option<usize> {
 ///   several files), and names a line the entry does not have. That last
 ///   clause is a floor, not a proof: a merged-program span really can point
 ///   into a package at a line the entry also happens to have, and then this
-///   marks the wrong line. It is the residual dishonesty of deriving a
-///   position from a whole-program compile, and it is what a per-file
-///   analysis fixes.
+///   marks the wrong line. It is the residual imprecision of deriving a
+///   position from a whole-program compile, and it is the one thing tier 1
+///   does not have.
 fn entry_span(source: &str, raw: &str) -> Option<ScalarSpan> {
     let entry_prefix = format!("{}: ", crate::ENTRY_PATH);
     let (body, known_entry) = match raw.strip_prefix(&entry_prefix) {
@@ -266,14 +241,9 @@ fn entry_span(source: &str, raw: &str) -> Option<ScalarSpan> {
 /// end_col)`.
 ///
 /// Both of `Span`'s `Display` forms are accepted. Scanning rather than
-/// matching a whole message shape is what keeps this working across the six
-/// error types that embed a span (`ParseFileError`, `ElabError`, `TypeError`,
-/// `EvalError`, and the loader's two wrappers), none of which agree on what
-/// surrounds it.
-///
-/// A non-position `line ` — a parse error's payload is a `Debug`-formatted
-/// `Span { start: Loc { line: 4, .. } }`, which contains one — simply fails to
-/// parse and the scan moves on, so the LEADING position still wins.
+/// matching a whole message shape is what keeps this working across the error
+/// types that embed a span (`ElabError`, `TypeError`, `EvalError`, and the
+/// loader's two wrappers), none of which agree on what surrounds it.
 fn scan_span(message: &str) -> Option<ScalarSpan> {
     let mut rest = message;
     loop {
@@ -311,7 +281,11 @@ fn number(s: &str) -> Option<(u32, &str)> {
 /// Re-express a 1-based line and 0-based SCALAR column as a 0-based UTF-16
 /// column on that line.
 ///
-/// The whole reason this is not the identity: `＋` and `吾` are one scalar and
+/// Tier 2's numbers arrive as text, already split into a line and a column, so
+/// `rustyfi_lsp::LineIndex` — which is keyed on byte offsets — has nothing to
+/// take. This does the same conversion for the coordinates that are available.
+///
+/// The whole reason it is not the identity: `＋` and `吾` are one scalar and
 /// one UTF-16 unit, but `𠮷` is one scalar and TWO, so a column counted in
 /// scalars lands half a code point early once anything astral precedes it on
 /// the line. Both are also the wrong answer if bytes are used, which is the
@@ -348,7 +322,7 @@ fn to_json(diags: &[Diag]) -> String {
             d.character,
             d.end_line,
             d.end_character,
-            d.severity.as_str()
+            severity_str(d.severity)
         ));
         escape_into(&mut out, &d.message);
         out.push_str("\"}");
@@ -391,6 +365,70 @@ mod tests {
         assert_eq!(analyze(src, Lang::V0_0), Vec::new());
     }
 
+    /// TIER 1, and the one thing it does here that the compile path measurably
+    /// could not: **a parse failure at end of input is still drawable.**
+    ///
+    /// `>>>` closes the document and then runs out of tokens looking for the
+    /// right operand of a `>`, so the failure's span is zero-width at EOF. The
+    /// compile path reported that verbatim, `4:0-4:0`, and the page draws
+    /// nothing at all for a zero-width range — the reader got a row saying
+    /// "document" and no underline. `rustyfi_lsp::span_to_range` widens a
+    /// degenerate span, backwards when there is nothing ahead of it, so there
+    /// is a character to underline.
+    ///
+    /// The message is checked for what it must NOT contain as well: the
+    /// payload used to be a `Debug` dump of syan's whole error tree, complete
+    /// with byte offsets and a nested `Span { start: Loc { .. } }`.
+    #[test]
+    fn a_parse_failure_at_end_of_input_is_still_underlinable() {
+        let src = "@require: stdja-mini\n\
+                   document (|title = {t}; author = {a};|) '<\n  \
+                     +p { hi }\n\
+                   >>>\n";
+        let diags = analyze(src, Lang::V0_0);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        let d = &diags[0];
+        assert!(!d.message.contains("Loc {"), "{d:?}");
+        assert!(!d.message.contains("span:"), "{d:?}");
+        // Non-degenerate: the last `>` of line 4 (zero-based 3) through the
+        // newline that ends it. Anything zero-width here is invisible.
+        assert_eq!((d.line, d.character, d.end_line, d.end_character), (3, 3, 4, 0), "{d:?}");
+    }
+
+    /// The ORDER of the two tiers, stated as a property rather than assumed.
+    ///
+    /// A document that both fails to parse and names a package that does not
+    /// exist must report the syntax, because the syntax is what the author is
+    /// looking at. Repairing only the syntax must then surface the package.
+    ///
+    /// Worth knowing while reading this: it would pass even with tier 1
+    /// removed, because `rustyfi_loader::load` also parses the entry before
+    /// resolving a single header — a header cannot be found without parsing.
+    /// So this pins the ORDER the page depends on, not the existence of tier
+    /// 1; what tier 1 changes about this case is the span, above.
+    #[test]
+    fn syntax_is_reported_before_an_unresolvable_package() {
+        let src = "@require: no-such-package-at-all\n\
+                   document (|title = {t}; author = {a};|) '<\n  \
+                     +p { hi }\n\
+                   >>>\n";
+        let diags = analyze(src, Lang::V0_0);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert!(
+            !diags[0].message.contains("no-such-package-at-all"),
+            "{diags:?}"
+        );
+        let fixed = src.replace(">>>", ">");
+        let diags = analyze(&fixed, Lang::V0_0);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert!(
+            diags[0].message.contains("no-such-package-at-all"),
+            "{diags:?}"
+        );
+    }
+
+    /// TIER 2. Parsing says nothing about a name that is not bound; only the
+    /// program does, and this shim has the program.
     #[test]
     fn an_unbound_name_is_positioned_where_it_is_written() {
         let src = "@require: stdja-mini\n\
@@ -408,28 +446,40 @@ mod tests {
 
     /// The trap this feature is most likely to fall into: the column is
     /// counted in the wrong unit and every marker in a Japanese document lands
-    /// somewhere else. The offending name here sits AFTER the Japanese on its
-    /// own line, so a byte count would be far too large.
+    /// somewhere else. Checked on BOTH tiers, because they compute the column
+    /// by completely different routes — tier 1 through a byte-keyed line
+    /// index, tier 2 by re-reading the line — and a regression in either would
+    /// be invisible in the other's test.
     #[test]
     fn a_column_after_japanese_text_is_not_a_byte_offset() {
-        let src = "@require: stdja-mini\n\
-                   let s = `吾輩は猫である` in let y = nosuchvariable in\n\
-                   document (|title = {t}; author = {a};|) '<\n  \
-                     +p { hi }\n\
-                   >\n";
-        let diags = analyze(src, Lang::V0_0);
+        let jp = "let s = `吾輩は猫である` in ";
+        let head = "@require: stdja-mini\n";
+        let tail = "document (|title = {t}; author = {a};|) '<\n  +p { hi }\n>\n";
+
+        // Tier 2: an unbound name after the Japanese.
+        let line = format!("{jp}let y = nosuchvariable in");
+        let src = format!("{head}{line}\n{tail}");
+        let diags = analyze(&src, Lang::V0_0);
         assert_eq!(diags.len(), 1, "{diags:?}");
-        let line = src.split('\n').nth(1).unwrap();
-        let want = line.find("nosuchvariable").unwrap();
-        // The BYTE offset is what a careless implementation reports, and the
-        // Japanese is exactly what makes the two differ.
-        let utf16 = line[..want].encode_utf16().count() as u32;
-        assert_ne!(utf16, want as u32, "the fixture must not be all-ASCII");
+        let at = line.find("nosuchvariable").unwrap();
+        let utf16 = line[..at].encode_utf16().count() as u32;
+        assert_ne!(utf16, at as u32, "the fixture must not be all-ASCII");
+        assert_eq!((diags[0].line, diags[0].character), (1, utf16), "{diags:?}");
+
+        // Tier 1: a syntax error after the Japanese, on the same line. `@@` is
+        // not a token in either generation, so the lexer stops exactly there.
+        let line = format!("{jp}@@");
+        let src = format!("{head}{line}\n{tail}");
+        let diags = analyze(&src, Lang::V0_0);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        let at = line.find("@@").unwrap();
+        let utf16 = line[..at].encode_utf16().count() as u32;
+        assert_ne!(utf16, at as u32, "the fixture must not be all-ASCII");
         assert_eq!((diags[0].line, diags[0].character), (1, utf16), "{diags:?}");
     }
 
     /// One scalar, two UTF-16 units — the case a scalar count (which is what
-    /// the port's own `Span` carries) still gets wrong.
+    /// tier 2 reads out of a message) still gets wrong.
     #[test]
     fn an_astral_character_counts_as_two_units() {
         // `𠮷` is U+20BB7, outside the BMP.
@@ -449,20 +499,14 @@ mod tests {
     }
 
     #[test]
-    fn both_span_spellings_are_recognised_and_a_debug_payload_is_not() {
+    fn both_span_spellings_are_recognised() {
         assert_eq!(
-            scan_span("line 4, characters 1-3: parse error: nope"),
+            scan_span("line 4, characters 1-3: unbound variable 'x'"),
             Some((4, 1, 4, 3))
         );
         assert_eq!(
             scan_span("line 2, character 5 to line 7, character 1: bad"),
             Some((2, 5, 7, 1))
-        );
-        // The leading position wins over the `Debug`-rendered `Loc { line: 9 }`
-        // the parser's own payload carries.
-        assert_eq!(
-            scan_span("line 4, characters 1-3: parse error: Expected { span: Span { start: Loc { line: 9, col: 2 } } }"),
-            Some((4, 1, 4, 3))
         );
         assert_eq!(scan_span("cannot resolve `@require: nope`"), None);
         assert_eq!(scan_span("line 4"), None);
@@ -474,12 +518,12 @@ mod tests {
     fn a_package_position_is_not_claimed_as_the_documents() {
         let src = "one\ntwo\nthree\n";
         let raw = format!(
-            "{}/dist/packages/stdja-mini.satyh: line 2, characters 0-3: parse error: nope",
+            "{}/dist/packages/stdja-mini.satyh: line 2, characters 0-3: boom",
             crate::VIRTUAL_ROOT
         );
         assert_eq!(entry_span(src, &raw), None);
         // …whereas the same position attributed to the entry is taken.
-        let mine = format!("{}: line 2, characters 0-3: parse error: nope", crate::ENTRY_PATH);
+        let mine = format!("{}: line 2, characters 0-3: boom", crate::ENTRY_PATH);
         assert_eq!(entry_span(src, &mine), Some((1, 0, 1, 3)));
     }
 
@@ -512,30 +556,6 @@ mod tests {
     }
 
     #[test]
-    fn a_debug_rendered_span_is_removed_but_the_rest_of_the_payload_is_not() {
-        assert_eq!(
-            tidy(
-                "line 4, characters 1-3: parse error: Expected { span: Span { start: \
-                 Loc { line: 4, col: 1, byte: 77 }, end: Loc { line: 4, col: 3, byte: 79 } }, \
-                 what: \"end of input\" }"
-            ),
-            "parse error: Expected { what: \"end of input\" }"
-        );
-        // A span as the ONLY field leaves a well-formed empty struct rather
-        // than `{ , }`.
-        assert_eq!(
-            strip_debug_spans("Eof { span: Span { start: Loc { line: 1 } } }"),
-            "Eof { }"
-        );
-        // Nothing to strip: untouched, including the word `span` used plainly.
-        assert_eq!(strip_debug_spans("a span of text"), "a span of text");
-        assert_eq!(
-            strip_debug_spans("unbound variable 'x'"),
-            "unbound variable 'x'"
-        );
-    }
-
-    #[test]
     fn json_is_parseable_when_the_message_carries_quotes_and_newlines() {
         let json = to_json(&[Diag {
             line: 1,
@@ -551,6 +571,15 @@ mod tests {
         // A raw control character would make the whole array unparseable.
         assert!(json.contains("\\u0001"), "{json}");
         assert_eq!(to_json(&[]), "[]");
+        // The two severities the local copy of this enum did not have still
+        // have a spelling, so a future warning cannot serialize as an error.
+        for (s, want) in [
+            (Severity::Warning, "warning"),
+            (Severity::Information, "information"),
+            (Severity::Hint, "hint"),
+        ] {
+            assert_eq!(severity_str(s), want);
+        }
     }
 
     /// A 0.1 document analysed as 0.1 is clean, and the SAME document analysed

@@ -634,22 +634,24 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "rustyfi-backend"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "newer-type 0.3.0",
  "newer-type-std",
+ "syan",
  "unicode-linebreak",
 ]
 
 [[package]]
 name = "rustyfi-lang"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hyphenation",
  "image",
  "rustyfi-backend",
  "rustyfi-loader",
  "rustyfi-syntax",
+ "syan",
  "thiserror",
  "unicode-normalization",
  "unicode-segmentation",
@@ -657,7 +659,7 @@ dependencies = [
 
 [[package]]
 name = "rustyfi-loader"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rustyfi-syntax",
  "safegraph 0.1.0",
@@ -667,8 +669,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustyfi-lsp"
+version = "0.1.1"
+dependencies = [
+ "rustyfi-syntax",
+ "syan",
+]
+
+[[package]]
 name = "rustyfi-pdf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "pdf-writer",
  "rustyfi-backend",
@@ -681,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "rustyfi-syntax"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "newer-type 0.3.0",
  "newer-type-std",
@@ -696,6 +706,7 @@ dependencies = [
  "rustyfi-backend",
  "rustyfi-lang",
  "rustyfi-loader",
+ "rustyfi-lsp",
  "rustyfi-pdf",
  "rustyfi-syntax",
 ]

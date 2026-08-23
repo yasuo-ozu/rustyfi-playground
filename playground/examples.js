@@ -453,7 +453,14 @@ SlydifiThemePlain.document '<
   },
   {
     name: "Standard library (base)",
-    needsFont: false,
+    // Flipped when the submodule pin moved to the typesetter's 0.1.1: text
+    // inside a line-stacked `EmbeddedBlock` used to be dropped, which silently
+    // swallowed the CONTENTS of the natural-deduction tree at the end of this
+    // document. Now they are typeset, and one of them is `\vdash` (⊢), which
+    // is outside WinAnsi. So the example did not change and neither did the
+    // label's meaning — the renderer stopped losing the character that makes
+    // it true.
+    needsFont: true,
     source: `% Adapted from satysfi-base's own README, whose TL;DR opens with \`Inline.read\`,
 % and from its \`__test__/satysrc/derive\` cases.
 
