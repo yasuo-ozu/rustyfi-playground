@@ -23,6 +23,11 @@
     --error-line: #e8b4ad;
     --ok: #1f7a44;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    /* The editor's own three. Kept here rather than in the JS theme so both
+       colour schemes are stated in one place, beside everything else. */
+    --sel: rgba(122, 79, 214, 0.22);
+    --hl: rgba(122, 79, 214, 0.07);
+    --kw: #8a2f8f; --str: #1f6f43; --com: #7b7f8b; --cmd: #1a4fa0; --num: #9a5b12;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -37,6 +42,9 @@
       --error-ink: #ffb3a7;
       --error-line: #5e332e;
       --ok: #6edb9c;
+      --sel: rgba(168, 136, 240, 0.30);
+      --hl: rgba(168, 136, 240, 0.09);
+      --kw: #d79be0; --str: #8fd3a8; --com: #7f8593; --cmd: #85b6f0; --num: #e0b07a;
     }
   }
   * { box-sizing: border-box; }
@@ -138,44 +146,44 @@
     margin: 0 0 0.4rem; font-size: 0.76rem; text-transform: uppercase;
     letter-spacing: 0.07em; color: var(--muted); font-weight: 600;
   }
-  /* THE EDITOR AND ITS DIAGNOSTIC UNDERLINES.
-     `#editor` stacks two boxes that must agree on every metric that affects
-     where a character lands: the `textarea` the user types into, and `#marks`,
-     a mirror of the same text underneath it carrying the underlines. The
-     shared declarations are in `#editor .layer` precisely so the two cannot
-     drift — a difference in padding, font or wrapping would soft-wrap the
-     mirror differently and put every underline on the wrong row.
-     The textarea is transparent so the mirror shows through; its text sits on
-     top, so selection, the caret and IME all behave as they did. */
+  /* THE EDITOR.
+     CodeMirror 6, vendored under `vendor/` and served from this origin — see
+     the import at the top of the script for why it is committed rather than
+     fetched. It replaced a `textarea` with an inert mirror layer underneath
+     it, which existed only because a textarea cannot style its own text: it
+     had to be kept in exact metric lockstep with the textarea or every
+     diagnostic underline slid onto the wrong row. A real editor draws
+     decorations over its own text and MAPS them through edits, so that whole
+     mechanism — the mirror, its scroll sync, its scrollbar-width
+     compensation, and the absolute UTF-16 offsets it was addressed by — is
+     gone.
+     Everything visual is expressed against this page's own CSS variables (see
+     `editorTheme`), so the editor follows the light/dark scheme without a
+     second palette to keep in step. */
   #editor {
     position: relative; flex: 1; min-height: 240px;
     border: 1px solid var(--line); border-radius: 9px;
     background: var(--panel); overflow: hidden;
   }
-  #editor .layer {
-    position: absolute; inset: 0;
-    margin: 0; padding: 0.8rem; border: 0;
-    font-family: var(--mono); font-size: 13px; line-height: 1.5;
-    letter-spacing: normal; tab-size: 2;
-    /* The pair a `textarea` wraps by under its own UA stylesheet. Stated on
-       BOTH layers so the mirror breaks lines exactly where the editor does. */
-    white-space: pre-wrap; overflow-wrap: break-word;
+  /* The editor is mounted into an absolutely positioned layer, exactly as the
+     textarea it replaced was, and NOT straight into `#editor`. In normal flow
+     it takes its height from its CONTENT — CodeMirror's own base theme pins
+     `.cm-editor` to `position: relative !important`, so it cannot be taken out
+     of flow directly — and a fifty-line document then grows the pane past the
+     viewport and scrolls the whole PAGE instead of the editor. */
+  #editor .fill { position: absolute; inset: 0; }
+  #editor .cm-editor { height: 100%; }
+  /* The hover tooltip's contents. Markdown from the module, rendered into
+     three shapes and no more: a fenced signature, `code` spans, prose. */
+  .hover { max-width: 34rem; padding: 0.5rem 0.7rem; font: inherit; font-size: 0.84rem; }
+  .hover pre {
+    margin: 0 0 0.4rem; padding: 0.35rem 0.5rem; overflow-x: auto;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    font-family: var(--mono); font-size: 0.95em; white-space: pre-wrap; word-break: break-word;
   }
-  #editor textarea {
-    width: 100%; height: 100%; resize: none;
-    background: transparent; color: var(--ink);
-    border-radius: 9px; overflow: auto;
-  }
-  #marks {
-    /* Below the textarea, and inert: it exists only to be looked at. */
-    z-index: 0; pointer-events: none; overflow: hidden; color: transparent;
-  }
-  #marks mark {
-    background: transparent; color: transparent;
-    text-decoration: underline wavy var(--error-ink);
-    text-decoration-skip-ink: none;
-    text-underline-offset: 0.18em;
-  }
+  .hover p { margin: 0.3rem 0 0; color: var(--muted); }
+  .hover p:first-child { margin-top: 0; }
+  .hover code { background: var(--bg); border-radius: 4px; padding: 0 0.2em; }
   /* The problems list. Deliberately under the editor rather than in the
      right-hand pane: it is about the SOURCE, and the right pane belongs to
      the PDF. It collapses to nothing when there is nothing to say. */
@@ -198,9 +206,36 @@
   #diags .note {
     margin: 0.15rem 0 0; color: var(--muted); font-size: 0.74rem;
   }
+  /* What the editor can do, said once and quietly. Hover and Ctrl-click are
+     not discoverable by looking at a page, and a feature nobody knows about
+     may as well not be there. */
+  #tips {
+    flex: none; margin: 0.35rem 0 0; font-size: 0.74rem; color: var(--muted);
+    line-height: 1.5;
+  }
+  #tips kbd {
+    font-family: var(--mono); font-size: 0.92em;
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+    padding: 0 0.25em;
+  }
+  .pane > h2 { display: flex; align-items: baseline; gap: 0.4rem; }
   .pane > h2 .live { font-weight: 400; text-transform: none; letter-spacing: 0; }
   .pane > h2 .live.bad { color: var(--error-ink); }
   .pane > h2 .live.good { color: var(--ok); }
+  /* The outline. A jump list rather than a pane: a single-buffer playground
+     has no room for a permanent tree, and this costs nothing when the
+     document declares nothing — it is hidden entirely below two names. */
+  #outline {
+    margin-left: auto; padding: 0.1rem 0.3rem; border-radius: 5px;
+    font-size: 0.72rem; text-transform: none; letter-spacing: 0;
+    font-weight: 400; max-width: 14rem;
+  }
+  #outline[hidden] { display: none; }
+  #diags button .switch {
+    margin-left: 0.5rem; padding: 0.05rem 0.4rem; font-size: 0.74rem;
+    border: 1px solid currentColor; border-radius: 5px; background: transparent;
+    color: inherit; font-family: inherit; cursor: pointer; white-space: nowrap;
+  }
   iframe {
     width: 100%; flex: 1; min-height: 240px;
     border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
@@ -298,12 +333,18 @@
 <main>
   <div class="grid">
     <section class="pane">
-      <h2>Source <span class="live" id="live"></span></h2>
-      <div id="editor">
-        <div class="layer" id="marks" aria-hidden="true"></div>
-        <textarea class="layer" id="source" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
-      </div>
+      <h2>Source <span class="live" id="live"></span>
+        <select id="outline" hidden aria-label="Go to a declaration"
+                title="Declarations in this document — jump to one"></select>
+      </h2>
+      <div id="editor"><div class="fill" id="editor-fill"></div></div>
       <div id="diags" role="region" aria-live="polite" aria-label="Problems"></div>
+      <p id="tips">
+        Hover a name to see what it is and which package declares it ·
+        <kbd>Ctrl</kbd>-click or <kbd>F12</kbd> jumps to a definition in this
+        document · <kbd>Ctrl</kbd>-<kbd>Space</kbd> completes, as does typing
+        <code>\</code>, <code>+</code>, <code>#</code> or <code>Module.</code>
+      </p>
     </section>
     <section class="pane">
       <h2>PDF <span id="dl"></span></h2>
@@ -321,9 +362,23 @@ import { instantiateFromUrl } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
 import { decodeSource, encodeSource, shareUrl, shareLang, shorten, SHORTENER_MAX_URL } from "./share.js";
 import { groupPackages } from "./packages.js";
+// CodeMirror 6, VENDORED: `playground/vendor/codemirror.js` is committed to
+// this repository and served from this origin, because the page fetches
+// nothing at runtime — no CDN, no external stylesheet, no remote font. It is
+// built from `editor/package.json` by `editor/build.mjs`, which also
+// regenerates `licenses/LICENSE-codemirror-MIT.txt` from the licence text of
+// every package that actually ended up in the bundle. 362 kB, 115 kB gzipped,
+// against a WebAssembly module of 7.6 MB / 2.0 MB gzipped — about 5% more to
+// download, for the editor the four language features below need.
+import {
+  autocompletion, bracketMatching, Compartment, completionKeymap, defaultKeymap,
+  drawSelection, dropCursor, EditorState, EditorView, forceLinting, highlightActiveLine,
+  highlightActiveLineGutter, highlightSpecialChars, history, historyKeymap,
+  HighlightStyle, hoverTooltip, indentUnit, indentWithTab, keymap, lineNumbers,
+  linter, lintGutter, StreamLanguage, syntaxHighlighting, tags,
+} from "./vendor/codemirror.js";
 
 const $ = (id) => document.getElementById(id);
-const sourceEl = $("source");
 const statusEl = $("status");
 const errorEl = $("error");
 const previewEl = $("preview");
@@ -331,9 +386,9 @@ const placeholderEl = $("placeholder");
 const compileBtn = $("compile");
 const shareBtn = $("share");
 const langEl = $("lang");
-const marksEl = $("marks");
 const diagsEl = $("diags");
 const liveEl = $("live");
+const outlineEl = $("outline");
 
 /// `0` for SATySFi 0.0.6, `1` for 0.1 — the wire value the module expects.
 const currentLang = () => Number(langEl.value) || 0;
@@ -343,6 +398,33 @@ const SHORTENED_BY = "Shortened by a third-party service, which received this li
 let rustyfi = null;
 let fontBytes = null;
 let blobUrl = null;
+
+/// The editor, once it exists.
+///
+/// It is created near the bottom of this script, after the extensions it is
+/// assembled from; everything above only ever reaches the document through
+/// the two accessors below, which work before it exists. That is what lets the
+/// example picker and the share-link decoder run in their natural place —
+/// early, so the page shows the right document even if the module never
+/// loads — without ordering the whole file around the editor.
+let view = null;
+let pendingDoc = "";
+
+const getDoc = () => (view === null ? pendingDoc : view.state.doc.toString());
+
+/// Replace the whole document. Undoable, like any other edit, and it puts the
+/// caret at the top rather than leaving it wherever the last document ended.
+function setDoc(text) {
+  if (view === null) {
+    pendingDoc = text;
+    return;
+  }
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: text },
+    selection: { anchor: 0 },
+    scrollIntoView: true,
+  });
+}
 
 const el = (tag, props, ...children) => {
   const node = Object.assign(document.createElement(tag), props);
@@ -440,7 +522,7 @@ async function share() {
   try {
     const long = shareUrl(
       window.location.href,
-      await encodeSource(sourceEl.value),
+      await encodeSource(getDoc()),
       currentLang(),
     );
     // `shorten` returns null only when EVERY configured shortener declines or is
@@ -496,7 +578,7 @@ let sharedSource = null;
 let sharedLang = 0;
 $("example").addEventListener("change", (e) => {
   const chosen = EXAMPLES[Number(e.target.value)];
-  sourceEl.value = chosen ? chosen.source : sharedSource;
+  setDoc(chosen ? chosen.source : sharedSource);
   // An example knows which generation it is written in, and the two grammars
   // are not compatible, so loading a 0.1 example without moving the selector
   // would leave a document on screen that cannot compile as selected.
@@ -511,9 +593,9 @@ $("example").addEventListener("change", (e) => {
   // switch, would both be worse: the first discards their work, the second
   // makes it impossible to see what the other generation makes of a document.
   selectLang(chosen ? chosen.lang ?? 0 : sharedLang);
-  // A whole new document: whatever was underlined described the old one.
-  invalidateDiagnostics();
-  scheduleAnalysis(0);
+  // A whole new document: whatever was said about the old one is now about
+  // nothing. Re-run at once rather than on the debounce — this is a click.
+  analyseNow();
 });
 
 // A shared document wins over the default example, and takes the picker with
@@ -527,7 +609,7 @@ if (shared) {
     // The link carries its generation too, defaulting to 0.0.6 — a 0.1
     // document opened as 0.0.6 would arrive as a parse error.
     sharedLang = shareLang(window.location.search);
-    sourceEl.value = sharedSource;
+    setDoc(sharedSource);
     selectLang(sharedLang);
     const option = document.createElement("option");
     option.value = "shared";
@@ -536,11 +618,11 @@ if (shared) {
     $("example").prepend(option);
   } catch (e) {
     sharedError = e && e.message ? e.message : String(e);
-    sourceEl.value = EXAMPLES[0].source;
+    setDoc(EXAMPLES[0].source);
     selectLang(EXAMPLES[0].lang ?? 0);
   }
 } else {
-  sourceEl.value = EXAMPLES[0].source;
+  setDoc(EXAMPLES[0].source);
   selectLang(EXAMPLES[0].lang ?? 0);
 }
 
@@ -612,7 +694,7 @@ function typeset() {
   // module blocks the main thread. Compilation is synchronous inside wasm.
   requestAnimationFrame(() => {
     const started = performance.now();
-    const result = rustyfi.compile(sourceEl.value, fontBytes, currentLang());
+    const result = rustyfi.compile(getDoc(), fontBytes, currentLang());
     const ms = Math.round(performance.now() - started);
     if (result.ok) {
       showPdf(result.pdf);
@@ -632,36 +714,288 @@ function typeset() {
 }
 
 // ---------------------------------------------------------------------------
-// LIVE DIAGNOSTICS
+// THE EDITOR, AND THE FOUR LANGUAGE FEATURES OVER IT
 //
-// The module analyses a document without typesetting it (no rendering, no
-// font), in two tiers: the typesetter's own language server parses it, and
-// only if that is silent is the whole program compiled. Which tier answers
-// decides the cost, and the two are three orders of magnitude apart — under a
-// millisecond for a parse, up to 530 ms for a compile of the xpath logo,
-// measured on the examples this page ships.
+// Diagnostics, hover, completion and go-to-definition all come out of the same
+// WebAssembly module the Typeset button drives — `rustyfi_lsp`'s own
+// protocol-free half, plus, for every name this buffer does not itself bind,
+// the `@require:` graph resolved against the corpus baked into the module.
 //
-// A buffer being typed into is USUALLY mid-construct and so usually answered
-// by the first tier, which is why the debounce below is a floor rather than
-// the whole story: what it protects against is the pause landing on a document
-// that does parse.
+// WHAT EACH ONE ANSWERS, on the 24 examples this page ships:
 //
-// 600 ms, chosen against those two numbers: comfortably longer than the gap
-// between keystrokes of anyone typing continuously (so a burst of typing costs
-// ONE analysis, not one per character), and short enough that stopping to look
-// at the screen produces an answer before you have finished looking. The
-// analysis runs on the main thread — everything in this page does — so the
-// figure that matters is not the delay but the delay PLUS the work: at 600 ms
-// even the worst example leaves the page idle most of the time, and a typical
-// document is imperceptible.
+//   * hover      — passive, on mouseover. Answers wherever there is anything
+//                  to say and stays silent otherwise, which is the right
+//                  bargain for something nobody asked for.
+//   * completion — only on a sigil (`\`, `+`, `#`), a `Module.` prefix, or an
+//                  explicit Ctrl-Space. An empty answer shows NO popup at all
+//                  rather than an empty one; CodeMirror does that for us as
+//                  long as the source returns `null`.
+//   * definition — Ctrl/Cmd-click, or F12. It lands in this buffer about one
+//                  time in twenty, so it is not advertised in the interface;
+//                  when the name comes from a package instead, it says which.
+//   * outline    — a jump list in the pane heading, hidden below two
+//                  declarations, which on a playground document is most of
+//                  the time.
+//
+// COST, measured in this page with `performance.now()`: a hover is one parse
+// of the buffer, ~1 ms on the largest example; a completion is that plus a
+// filter over the index. The dependency index is the one expensive thing
+// (~100 ms for `stdjabook`'s thirteen files) and is built ONCE per set of
+// headers, on an idle callback after an analysis, so no hover ever waits for
+// it.
 // ---------------------------------------------------------------------------
+
+/// A CodeMirror offset as the module's `(line, character)` — zero-based, and
+/// in UTF-16 code units, which is what a JavaScript string index already is.
+/// The whole reason the module reports and accepts these units rather than
+/// bytes: `吾輩は猫である` is 21 bytes and 7 units, and a byte offset used
+/// here would answer about the wrong token in half this corpus.
+function lcAt(state, pos) {
+  const line = state.doc.lineAt(pos);
+  return { line: line.number - 1, character: pos - line.from };
+}
+
+/// …and back. Clamped at both ends: the module answers about the text it was
+/// given, and the editor may have moved on by a keystroke.
+function posAt(state, line, character) {
+  const l = state.doc.line(Math.min(Math.max(line + 1, 1), state.doc.lines));
+  return Math.min(l.from + Math.max(character, 0), l.to);
+}
+
+// -- syntax highlighting ----------------------------------------------------
+//
+// A stream tokenizer, not a grammar: this is a bonus that fell out of having
+// an editor at all, and a real SATySFi grammar is a project rather than a
+// detail. It knows comments, string literals, command names, headers, numbers
+// with units, and the keyword list — enough that the shape of a document is
+// legible, and nothing that pretends to parse.
+
+const KEYWORDS = new Set([
+  "let", "let-rec", "let-inline", "let-block", "let-math", "let-mutable", "in",
+  "and", "match", "with", "when", "as", "fun", "if", "then", "else", "true",
+  "false", "before", "while", "do", "mod", "not", "open", "module", "struct",
+  "sig", "end", "val", "direct", "type", "of", "constraint", "command",
+  "controls", "cycle", "inline-cmd", "block-cmd", "math-cmd", "use", "package",
+  "signature", "include", "persistent", "rec",
+]);
+
+const satysfiMode = {
+  name: "satysfi",
+  startState: () => ({ ticks: 0 }),
+  token(stream, state) {
+    // A string literal is `n` backticks to the next run of `n` backticks, so
+    // the count has to be carried across lines.
+    if (state.ticks > 0) {
+      while (!stream.eol()) {
+        const run = stream.match(/^`+/);
+        if (run && run[0].length >= state.ticks) {
+          state.ticks = 0;
+          return "string";
+        }
+        if (!run) stream.next();
+      }
+      return "string";
+    }
+    if (stream.eatSpace()) return null;
+    if (stream.match(/^%.*/)) return "comment";
+    if (stream.match(/^@(require|import|stage):/)) return "meta";
+    const open = stream.match(/^`+/);
+    if (open) {
+      state.ticks = open[0].length;
+      return "string";
+    }
+    // A command name carries its sigil, and may be qualified.
+    if (stream.match(/^[\\+][A-Za-z][-A-Za-z0-9]*(\.[A-Za-z][-A-Za-z0-9]*)*/)) return "variable-2";
+    if (stream.match(/^#[A-Za-z][-A-Za-z0-9]*/)) return "variable-2";
+    if (stream.match(/^[0-9]+(\.[0-9]+)?(pt|cm|mm|inch|ex|em)?/)) return "number";
+    if (stream.match(/^'[a-z][A-Za-z0-9]*/)) return "type";
+    const word = stream.match(/^[A-Za-z_][-A-Za-z0-9_]*/);
+    if (word) return KEYWORDS.has(word[0]) ? "keyword" : null;
+    stream.next();
+    return null;
+  },
+};
+
+const satysfiHighlight = HighlightStyle.define([
+  { tag: tags.keyword, color: "var(--kw)" },
+  { tag: tags.comment, color: "var(--com)", fontStyle: "italic" },
+  { tag: tags.string, color: "var(--str)" },
+  { tag: tags.meta, color: "var(--num)" },
+  { tag: tags.number, color: "var(--num)" },
+  { tag: tags.special(tags.variableName), color: "var(--cmd)" },
+  { tag: tags.typeName, color: "var(--cmd)" },
+]);
+
+// -- the look ---------------------------------------------------------------
+
+const editorTheme = EditorView.theme({
+  "&": { height: "100%", color: "var(--ink)", backgroundColor: "transparent" },
+  "&.cm-focused": { outline: "none" },
+  ".cm-scroller": {
+    fontFamily: "var(--mono)", fontSize: "13px", lineHeight: "1.5",
+    overflow: "auto",
+  },
+  ".cm-content": { padding: "0.6rem 0", caretColor: "var(--ink)" },
+  ".cm-gutters": {
+    backgroundColor: "transparent", color: "var(--muted)",
+    border: "none", paddingRight: "0.35rem",
+  },
+  ".cm-activeLine": { backgroundColor: "var(--hl)" },
+  ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--ink)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--ink)" },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
+    { backgroundColor: "var(--sel)" },
+  ".cm-tooltip": {
+    background: "var(--panel)", color: "var(--ink)",
+    border: "1px solid var(--line)", borderRadius: "9px",
+    boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
+  },
+  ".cm-tooltip-autocomplete > ul": {
+    fontFamily: "var(--mono)", fontSize: "12.5px", maxHeight: "16rem",
+  },
+  ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
+    background: "var(--accent)", color: "var(--accent-ink)",
+  },
+  ".cm-completionDetail": { fontStyle: "normal", opacity: "0.65", marginLeft: "0.6em" },
+  ".cm-completionInfo": {
+    fontFamily: "var(--mono)", fontSize: "12px", maxWidth: "34rem",
+    background: "var(--panel)", border: "1px solid var(--line)", borderRadius: "8px",
+  },
+  ".cm-diagnostic": { fontFamily: "inherit", fontSize: "0.84rem" },
+  // CodeMirror underlines a lint range with a repeating SVG background; this
+  // is the same wavy underline the page drew before, in the page's own error
+  // colour, so a diagnostic looks the same as it always did.
+  ".cm-lintRange-error": {
+    backgroundImage: "none",
+    textDecoration: "underline wavy var(--error-ink)",
+    textDecorationSkipInk: "none",
+  },
+});
+
+// -- hover ------------------------------------------------------------------
+
+/// Render the module's Markdown. It emits exactly three things — a fenced
+/// `satysfi` block, `code` spans and prose — so this is a formatter for those
+/// three and deliberately not a Markdown parser. Everything is built as text
+/// nodes, so a type quoted out of a package cannot become markup.
+function renderMarkdown(markdown) {
+  const wrap = el("div", { className: "hover" });
+  for (const block of markdown.split("\n\n")) {
+    if (block.startsWith("```")) {
+      wrap.append(el("pre", {
+        textContent: block.replace(/^```[a-z]*\n?/, "").replace(/\n?```$/, ""),
+      }));
+      continue;
+    }
+    const p = el("p", {});
+    block.split("`").forEach((part, i) => {
+      p.append(i % 2 === 1 ? el("code", { textContent: part }) : document.createTextNode(part));
+    });
+    wrap.append(p);
+  }
+  return wrap;
+}
+
+const hoverSource = hoverTooltip((v, pos) => {
+  if (!rustyfi || moduleTrapped) return null;
+  const { line, character } = lcAt(v.state, pos);
+  const answer = rustyfi.hover(getDoc(), currentLang(), line, character);
+  if (!answer) return null;
+  const from = posAt(v.state, answer.line, answer.character);
+  const to = posAt(v.state, answer.endLine, answer.endCharacter);
+  // The module answers about the innermost thing TOUCHING the offset, which
+  // includes the position just past a word. Hovering the space after `\emph`
+  // and being told about `\emph` reads as a stray tooltip, so an answer that
+  // does not cover the pointer is dropped.
+  if (pos < from || pos > to) return null;
+  return { pos: from, end: to, above: true, create: () => ({ dom: renderMarkdown(answer.markdown) }) };
+}, { hoverTime: 250 });
+
+// -- completion -------------------------------------------------------------
+
+/// The module's LSP `CompletionItemKind` as CodeMirror's own type name, which
+/// is what picks the icon beside a candidate.
+const COMPLETION_TYPE = {
+  3: "function", 5: "property", 6: "variable", 7: "class",
+  8: "interface", 9: "namespace", 20: "enum", 25: "type",
+};
+
+/// When to offer anything at all.
+///
+/// Never on a bare word being typed in prose — that is the single most
+/// annoying thing an editor does, and in a SATySFi document most typing IS
+/// prose. A sigil or a `Module.` prefix is an unambiguous request for a name,
+/// and Ctrl-Space is an explicit one.
+const TRIGGER = /(?:[\\+#][A-Za-z0-9_-]*|[A-Z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*)+)$/;
+
+function completionSource(context) {
+  if (!rustyfi || moduleTrapped) return null;
+  const before = context.state.sliceDoc(Math.max(0, context.pos - 80), context.pos);
+  if (!context.explicit && !TRIGGER.test(before)) return null;
+  const { line, character } = lcAt(context.state, context.pos);
+  const items = rustyfi.completions(getDoc(), currentLang(), line, character);
+  // No popup at all, rather than an empty one. This is the common case and it
+  // has to be invisible.
+  if (items.length === 0) return null;
+  return {
+    from: posAt(context.state, items[0].line, items[0].character),
+    to: context.pos,
+    options: items.map((item) => ({
+      label: item.label,
+      // Where it came from — "this document" or the package name — so a
+      // candidate the module found in the corpus is never passed off as one
+      // this buffer binds.
+      detail: item.source,
+      // The type its author wrote, in the side panel where it has room.
+      info: item.detail,
+      type: COMPLETION_TYPE[item.kind] ?? "text",
+    })),
+    // Filtering as the word grows is CodeMirror's job; re-asking the module
+    // per keystroke would be the same answer at 300 times the cost.
+    validFor: /^[\\+#]?[A-Za-z0-9_.-]*$/,
+  };
+}
+
+// -- go to definition -------------------------------------------------------
+
+function goToDefinition(v, pos) {
+  if (!rustyfi || moduleTrapped) return false;
+  const { line, character } = lcAt(v.state, pos);
+  const answer = rustyfi.definition(getDoc(), currentLang(), line, character);
+  if (!answer) return false;
+  if (answer.kind === "here") {
+    const from = posAt(v.state, answer.line, answer.character);
+    const to = posAt(v.state, answer.endLine, answer.endCharacter);
+    v.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
+    v.focus();
+    return true;
+  }
+  // It is defined in a bundled package, which this page has no way to open.
+  // Saying where is still worth more than doing nothing, which is what a
+  // single-file editor would otherwise have to do with four names in five.
+  showToast(`${answer.name} is not defined in this document`, { note: answer.detail });
+  return true;
+}
+
+// -- diagnostics ------------------------------------------------------------
+//
+// Two tiers behind one call: the typesetter's own language server parses the
+// document, and only if that is silent is the whole program compiled. The two
+// are three orders of magnitude apart — under a millisecond for a parse, up to
+// 530 ms for a compile of the xpath logo — and a buffer being typed into is
+// usually mid-construct, so the cheap tier answers most keystrokes.
+//
+// 600 ms of debounce: longer than the gap between keystrokes of anyone typing
+// continuously, so a burst costs ONE analysis; short enough that stopping to
+// look at the screen produces an answer before you have finished looking.
+// Everything here runs on the main thread, so what matters is the delay PLUS
+// the work.
 
 const ANALYSE_DELAY_MS = 600;
 /// …and never further apart than this, however slow the document, or the
 /// feature stops feeling live and starts feeling broken.
 const ANALYSE_MAX_DELAY_MS = 4000;
 
-let analyseTimer = null;
 /// What the last analysis actually cost. 600 ms is the right pause for a
 /// document that takes 150 ms to check; for one that takes a second it is not,
 /// because the page would then spend more time blocked than idle. Backing the
@@ -672,136 +1006,210 @@ let lastAnalysisMs = 0;
 /// for good, so continuing to poke it on a timer would turn one bad document
 /// into an error every 600 ms forever.
 let moduleTrapped = false;
-/// The text the diagnostics on screen were computed from. While the editor
-/// holds anything else, the underlines are stale and are taken down: an
-/// underline is a claim about a position, and the position moved.
-let analysedText = null;
 
-/// Ask for an analysis once the user stops typing.
-///
-/// `delay` is only passed as `0`, by the two things that replace what is in
-/// the editor outright (the example picker and the Lang selector) and should
-/// answer at once. Typing takes the debounce.
-function scheduleAnalysis(delay = null) {
-  if (!rustyfi || moduleTrapped) return;
-  const wait = delay !== null
-    ? delay
-    : Math.min(Math.max(ANALYSE_DELAY_MS, lastAnalysisMs * 3), ANALYSE_MAX_DELAY_MS);
-  if (analyseTimer) clearTimeout(analyseTimer);
-  analyseTimer = setTimeout(() => {
-    analyseTimer = null;
-    analyseNow();
-  }, wait);
-}
+const analyseDelay = () =>
+  Math.min(Math.max(ANALYSE_DELAY_MS, lastAnalysisMs * 3), ANALYSE_MAX_DELAY_MS);
 
-function analyseNow() {
-  if (!rustyfi || moduleTrapped) return;
-  const text = sourceEl.value;
+/// The lint source: analyse, draw the rows underneath the editor, and hand
+/// CodeMirror the ranges to underline. It maps them through later edits by
+/// itself, which is what retired the mirror layer this page used to keep.
+function analyse(v) {
+  if (!rustyfi || moduleTrapped) return [];
+  const text = v.state.doc.toString();
   const started = performance.now();
   const result = rustyfi.diagnostics(text, currentLang());
   lastAnalysisMs = performance.now() - started;
+  refreshOutline(text);
+  warmIndex(text);
   if (result.trapped) {
     // Same contract as `compile`: the instance is gone, so say so once and
     // stop. Typeset will report the same thing if it is pressed.
     moduleTrapped = true;
-    showDiagnostics(text, []);
+    showDiagnostics([]);
     liveEl.className = "live bad";
     liveEl.textContent = "— analysis stopped (the module trapped; reload the page)";
-    return;
+    return [];
   }
   if (!result.ok) {
     // The analysis could not run at all, which is not the same as "the
     // document is fine" and must not be shown as it.
-    showDiagnostics(text, []);
+    showDiagnostics([]);
     liveEl.className = "live bad";
     liveEl.textContent = "— could not analyse";
-    return;
+    return [];
   }
-  showDiagnostics(text, result.diagnostics);
-}
-
-/// Absolute UTF-16 offsets for a diagnostic's range within `text`.
-///
-/// Exact rather than approximate, and this is the whole reason the module
-/// reports UTF-16 columns: a JavaScript string is a UTF-16 code-unit sequence,
-/// so `line.length` and `setSelectionRange` count the same units the module
-/// counted. A byte offset would be right only for ASCII, which the examples
-/// this page ships are conspicuously not.
-function rangeOf(text, lineStarts, d) {
-  const at = (line, character) => {
-    const l = Math.min(Math.max(line, 0), lineStarts.length - 1);
-    const lineLen = (l + 1 < lineStarts.length ? lineStarts[l + 1] - 1 : text.length) - lineStarts[l];
-    return lineStarts[l] + Math.min(Math.max(character, 0), lineLen);
-  };
-  const start = at(d.line, d.character);
-  return [start, Math.max(start, at(d.endLine, d.endCharacter))];
-}
-
-/// The offset each line of `text` starts at.
-function lineStartsOf(text) {
-  const starts = [0];
-  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) starts.push(i + 1);
-  return starts;
-}
-
-/// Draw `diagnostics` over `text`: underlines in the editor, rows underneath.
-function showDiagnostics(text, diagnostics) {
-  analysedText = text;
-  diagsEl.style.opacity = "1";
-  const lineStarts = lineStartsOf(text);
-  const ranges = diagnostics
-    .map((d) => rangeOf(text, lineStarts, d))
+  showDiagnostics(result.diagnostics);
+  return result.diagnostics
+    .map((d) => ({
+      from: posAt(v.state, d.line, d.character),
+      to: posAt(v.state, d.endLine, d.endCharacter),
+      severity: d.severity === "error" ? "error" : "warning",
+      message: d.message,
+    }))
     // A zero-width range is how the module says "I could not place this" — a
     // failure inside a bundled package, or one the compiler reported with no
     // position. Underlining the first character would be a claim it did not
     // make, so nothing is drawn and the row below says "document".
-    .filter(([a, b]) => b > a)
-    .sort((p, q) => p[0] - q[0]);
+    .filter((d) => d.to > d.from);
+}
 
-  // The mirror: the same text, with `<mark>` around each range. Overlapping
-  // ranges are merged, because nesting `<mark>`s would double the underline.
-  const parts = [];
-  let cursor = 0;
-  for (const [start, end] of ranges) {
-    if (end <= cursor) continue;
-    const from = Math.max(start, cursor);
-    if (from > cursor) parts.push(document.createTextNode(text.slice(cursor, from)));
-    const mark = document.createElement("mark");
-    mark.textContent = text.slice(from, end);
-    parts.push(mark);
-    cursor = end;
+const lintConfig = new Compartment();
+
+/// Re-run the analysis at once rather than on the debounce.
+///
+/// Reconfiguring is what schedules it — the lint plugin re-runs on a config
+/// change as well as on an edit — and `forceLinting` then drops the wait.
+/// Used by the two things that replace the document outright (the example
+/// picker, a share link) and by the Lang selector, all of which are deliberate
+/// clicks rather than typing.
+function analyseNow() {
+  if (view === null) return;
+  view.dispatch({ effects: lintConfig.reconfigure(linter(analyse, { delay: analyseDelay() })) });
+  forceLinting(view);
+}
+
+// -- the editor itself ------------------------------------------------------
+
+view = new EditorView({
+  parent: $("editor-fill"),
+  doc: pendingDoc,
+  extensions: [
+    lineNumbers(),
+    highlightActiveLineGutter(),
+    highlightActiveLine(),
+    highlightSpecialChars(),
+    history(),
+    drawSelection(),
+    dropCursor(),
+    bracketMatching(),
+    indentUnit.of("  "),
+    EditorState.allowMultipleSelections.of(true),
+    EditorView.lineWrapping,
+    StreamLanguage.define(satysfiMode),
+    syntaxHighlighting(satysfiHighlight),
+    autocompletion({ override: [completionSource], activateOnTyping: true, icons: true }),
+    hoverSource,
+    lintGutter(),
+    lintConfig.of(linter(analyse, { delay: ANALYSE_DELAY_MS })),
+    keymap.of([
+      { key: "Mod-Enter", run: () => (typeset(), true) },
+      { key: "F12", run: (v) => goToDefinition(v, v.state.selection.main.head) },
+      indentWithTab,
+      ...completionKeymap,
+      ...historyKeymap,
+      ...defaultKeymap,
+    ]),
+    EditorView.domEventHandlers({
+      mousedown(event, v) {
+        if (event.button !== 0 || !(event.ctrlKey || event.metaKey)) return false;
+        const pos = v.posAtCoords({ x: event.clientX, y: event.clientY });
+        if (pos === null) return false;
+        event.preventDefault();
+        return goToDefinition(v, pos);
+      },
+    }),
+    EditorView.updateListener.of((update) => {
+      if (!update.docChanged) return;
+      // The rows below describe text that has just moved on. CodeMirror maps
+      // the UNDERLINES through the edit, so those stay honest; the rows are
+      // dimmed until the next answer arrives.
+      diagsEl.style.opacity = "0.5";
+      liveEl.className = "live";
+      liveEl.textContent = "— checking…";
+    }),
+    editorTheme,
+  ],
+});
+
+// -- the outline ------------------------------------------------------------
+
+/// Rebuild the jump list. Hidden below two entries: a document with one `let`
+/// in it does not need navigating, and a control that is always there and
+/// usually empty is worse than one that appears when it has something to say.
+function refreshOutline(text) {
+  const symbols = rustyfi ? rustyfi.symbols(text, currentLang()) : [];
+  outlineEl.hidden = symbols.length < 2;
+  if (outlineEl.hidden) {
+    outlineEl.replaceChildren();
+    return;
   }
-  // The trailing newline keeps the mirror's last line from collapsing, which
-  // would otherwise let its total height differ from the textarea's.
-  parts.push(document.createTextNode(text.slice(cursor) + "\n"));
-  marksEl.replaceChildren(...parts);
-  syncMarks();
+  const head = el("option", { value: "", textContent: `${symbols.length} declarations…` });
+  const options = symbols.map((s, i) =>
+    el("option", {
+      value: String(i),
+      textContent: `${"  ".repeat(s.depth)}${s.name}  ·  ${s.detail}`,
+    }));
+  outlineEl.replaceChildren(head, ...options);
+  outlineEl.value = "";
+  outlineEl.symbols = symbols;
+}
 
-  // The rows. Each one moves the caret to what it is talking about, which is
-  // the whole point of positioning a diagnostic rather than printing it.
-  const rows = diagnostics.map((d, i) => {
-    const [start, end] = rangeOf(text, lineStarts, d);
-    const placed = end > start;
+outlineEl.addEventListener("change", () => {
+  const symbol = (outlineEl.symbols ?? [])[Number(outlineEl.value)];
+  outlineEl.value = "";
+  if (!symbol || view === null) return;
+  const from = posAt(view.state, symbol.line, symbol.character);
+  const to = posAt(view.state, symbol.endLine, symbol.endCharacter);
+  view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
+  view.focus();
+});
+
+// -- the dependency index ---------------------------------------------------
+
+let warmedFor = null;
+
+/// Build the `@require:` index off the critical path.
+///
+/// It is the one expensive thing here (~100 ms for `stdjabook`), it only
+/// changes when a header does, and a hover that had to build it first would
+/// stall the pointer. So it is built on an idle callback after each analysis,
+/// keyed on the header lines so that ordinary typing costs nothing.
+function warmIndex(text) {
+  if (!rustyfi || moduleTrapped) return;
+  const headers = text.split("\n").filter((l) => l.startsWith("@")).join("\n") + `\n${currentLang()}`;
+  if (headers === warmedFor) return;
+  warmedFor = headers;
+  const build = () => rustyfi.index(text, currentLang());
+  if (window.requestIdleCallback) requestIdleCallback(build, { timeout: 2000 });
+  else setTimeout(build, 50);
+}
+
+// -- the problems list ------------------------------------------------------
+
+/// Draw the rows underneath the editor. The underlines themselves are
+/// CodeMirror's, from the same diagnostics.
+function showDiagnostics(diagnostics) {
+  diagsEl.style.opacity = "1";
+  const rows = diagnostics.map((d) => {
+    const placed = d.endLine > d.line || d.endCharacter > d.character;
     const row = el("button", { type: "button", className: d.severity });
     row.append(el("span", {
       className: "at",
       textContent: placed ? `${d.line + 1}:${d.character + 1}` : "document",
     }));
     row.append(el("span", { className: "msg", textContent: d.message }));
+    // The one case where the mistake is the SELECTOR and not the text: the
+    // document is clean under the other generation. Offer the switch rather
+    // than leaving a valid document underlined end to end.
+    if (d.otherLang !== undefined) {
+      const to = d.otherLang === 1 ? "0.1" : "0.0.6";
+      const switcher = el("button", {
+        type: "button", className: "switch", textContent: `parses as ${to} — switch`,
+      });
+      switcher.addEventListener("click", (e) => {
+        e.stopPropagation();
+        langEl.value = String(d.otherLang);
+        langEl.dispatchEvent(new Event("change"));
+      });
+      row.append(switcher);
+    }
     row.addEventListener("click", () => {
-      sourceEl.focus();
-      if (placed) {
-        sourceEl.setSelectionRange(start, end);
-        // `setSelectionRange` does not scroll on its own in every browser;
-        // nudging scrollTop by the selected line's position does.
-        const before = text.slice(0, start).split("\n").length - 1;
-        const lineHeight = parseFloat(getComputedStyle(sourceEl).lineHeight) || 19.5;
-        const wanted = before * lineHeight - sourceEl.clientHeight / 3;
-        if (wanted < sourceEl.scrollTop || wanted > sourceEl.scrollTop + sourceEl.clientHeight) {
-          sourceEl.scrollTop = Math.max(0, wanted);
-        }
-      }
-      syncScroll();
+      if (view === null) return;
+      view.focus();
+      if (!placed) return;
+      const from = posAt(view.state, d.line, d.character);
+      const to = posAt(view.state, d.endLine, d.endCharacter);
+      view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
     });
     return row;
   });
@@ -822,47 +1230,6 @@ function showDiagnostics(text, diagnostics) {
     : `— ${diagnostics.length} problem${diagnostics.length === 1 ? "" : "s"}`;
 }
 
-/// Scroll the mirror with the editor. Cheap enough for a scroll handler:
-/// two property writes and no style read.
-function syncScroll() {
-  marksEl.scrollTop = sourceEl.scrollTop;
-  marksEl.scrollLeft = sourceEl.scrollLeft;
-}
-
-/// Scroll the mirror AND re-do the scrollbar compensation.
-///
-/// The textarea's scrollbar, when it appears, narrows the text and re-wraps
-/// it. The mirror has no scrollbar of its own, so it is given the missing
-/// width as padding — otherwise a document long enough to scroll would wrap
-/// differently in the two layers and every underline past the first wrapped
-/// line would slide. Only on render and resize, since only those can change
-/// it.
-function syncMarks() {
-  syncScroll();
-  const gutter = sourceEl.offsetWidth - sourceEl.clientWidth;
-  const pad = getComputedStyle(sourceEl).paddingRight;
-  marksEl.style.paddingRight = gutter > 0 ? `calc(${pad} + ${gutter}px)` : pad;
-}
-
-/// Take the underlines down while the text they describe is out of date.
-function invalidateDiagnostics() {
-  if (analysedText !== null && analysedText !== sourceEl.value) {
-    marksEl.replaceChildren();
-    diagsEl.style.opacity = "0.5";
-    liveEl.className = "live";
-    liveEl.textContent = "— checking…";
-  }
-}
-
-sourceEl.addEventListener("scroll", syncScroll, { passive: true });
-sourceEl.addEventListener("input", () => {
-  invalidateDiagnostics();
-  scheduleAnalysis();
-});
-// The editor is a flex child of a responsive grid, so its width — and with it
-// where every line wraps — changes without any input event.
-if (window.ResizeObserver) new ResizeObserver(syncMarks).observe($("editor"));
-
 /// The two generations have different corpora, so the panel and its count are
 /// re-read from the module rather than filtered client-side.
 function refreshPackages() {
@@ -881,17 +1248,19 @@ langEl.addEventListener("change", () => {
     `SATySFi ${langEl.options[langEl.selectedIndex].textContent} \u2014 ` +
     `${names.length} packages bundled`;
   // The same text means something else under the other grammar, so every
-  // diagnostic on screen is now about a reading nobody asked for. Re-run at
-  // once rather than on a timer: this is a deliberate click, not typing.
-  marksEl.replaceChildren();
-  analysedText = null;
-  scheduleAnalysis(0);
+  // diagnostic on screen is now about a reading nobody asked for — and so is
+  // every hover and every completion, which is why the dependency index is
+  // keyed on the generation too. Re-run at once: this is a deliberate click.
+  analyseNow();
 });
 
 compileBtn.addEventListener("click", typeset);
 shareBtn.addEventListener("click", share);
-sourceEl.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+// Ctrl+Enter inside the editor is bound in its own keymap, where it can stop
+// the key from also inserting a newline; this is the same shortcut for
+// everywhere else on the page.
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !view.hasFocus) {
     e.preventDefault();
     typeset();
   }
@@ -913,9 +1282,10 @@ try {
     );
   }
   typeset();
-  // On the timer rather than straight away, so the opening render — which
-  // `typeset` defers to the next frame — is not held up behind it.
-  scheduleAnalysis();
+  // The editor's linter is already scheduled from the moment it was created,
+  // but at that point there was no module for it to ask, so it answered
+  // nothing. Now there is one.
+  analyseNow();
 } catch (e) {
   statusEl.textContent = "failed to load";
   showError(

@@ -11,6 +11,11 @@
 function wrap(instance) {
   const ex = instance.exports;
   const view = () => new Uint8Array(ex.memory.buffer);
+  /// Latched by the cursor-driven entry points, which cannot report a trap
+  /// through their return value the way `compile` does: they answer "nothing
+  /// here" for a living, and a caller must be able to tell that apart from a
+  /// dead instance.
+  let trapped = false;
 
   // Consume an `*mut Output`: copy its bytes out, then free it. The copy is
   // required — the bytes live in wasm memory and `rustyfi_output_free`
@@ -62,6 +67,7 @@ function wrap(instance) {
         );
         return ok ? { ok: true, pdf: bytes } : { ok: false, error: text(bytes) };
       } catch (e) {
+        trapped = true;
         return {
           ok: false,
           error:
@@ -104,6 +110,7 @@ function wrap(instance) {
         if (!ok) return { ok: false, error: text(bytes) };
         return { ok: true, diagnostics: JSON.parse(text(bytes)) };
       } catch (e) {
+        trapped = true;
         return {
           ok: false,
           error: `the WebAssembly module trapped while analysing: ${e && e.message ? e.message : e}`,
@@ -112,6 +119,90 @@ function wrap(instance) {
       } finally {
         if (srcPtr !== 0) ex.rustyfi_dealloc(srcPtr, srcLen);
       }
+    },
+
+    /// Describe what is at a cursor, for a hover tooltip:
+    ///
+    ///     { line, character, endLine, endCharacter, markdown }
+    ///
+    /// or `null` when there is nothing to say, which is an ordinary answer —
+    /// most positions in a document are prose. Positions in BOTH directions
+    /// are zero-based with UTF-16 columns, exactly as `diagnostics` reports
+    /// them, so an editor hands over what it already has.
+    ///
+    /// A trap is caught and latched (see `trapped`) rather than thrown: this
+    /// runs on mouseover, and an exception per pointer movement would be
+    /// unusable.
+    hover(source, lang, line, character) {
+        return this.ask(ex.rustyfi_hover, source, lang, line, character, null);
+    },
+
+    /// Where the name at a cursor is defined. One of
+    ///
+    ///     { kind: "here", line, character, endLine, endCharacter }
+    ///     { kind: "package", name, detail }
+    ///
+    /// or `null`. The second is a name that comes from a bundled package,
+    /// which the page cannot open — it says so instead of jumping.
+    definition(source, lang, line, character) {
+      return this.ask(ex.rustyfi_definition, source, lang, line, character, null);
+    },
+
+    /// Completion candidates at a cursor:
+    ///
+    ///     [{ label, detail, source, kind, line, character, endLine, endCharacter }]
+    ///
+    /// `kind` is LSP's `CompletionItemKind`; `source` is where the candidate
+    /// came from — "this document", or the package that declares it. The range
+    /// is the text a client should replace. An empty array is the common
+    /// answer and means "show nothing", not "nothing exists".
+    completions(source, lang, line, character) {
+      return this.ask(ex.rustyfi_completions, source, lang, line, character, []);
+    },
+
+    /// The document's own declarations, in source order:
+    ///
+    ///     [{ name, detail, kind, depth, line, character, endLine, endCharacter }]
+    symbols(source, lang) {
+      return this.ask(ex.rustyfi_symbols, source, lang, undefined, undefined, []);
+    },
+
+    /// Build the `@require:` index hover and completion answer out of, and
+    /// report what is in it: `{ files, names, packages, unresolved }`.
+    ///
+    /// Worth calling when the page is idle: the index is what makes the other
+    /// three answer about package vocabulary, it costs one parse per
+    /// dependency file, and it is cached until a header changes.
+    index(source, lang) {
+      return this.ask(ex.rustyfi_index, source, lang, undefined, undefined, {
+        files: 0, names: 0, packages: [], unresolved: [],
+      });
+    },
+
+    /// The shared body of the five above: push the source, call, parse JSON,
+    /// and fall back to `fallback` if the module trapped.
+    ask(fn, source, lang, line, character, fallback) {
+      if (trapped) return fallback;
+      const src = new TextEncoder().encode(source);
+      let srcPtr = 0, srcLen = 0;
+      try {
+        [srcPtr, srcLen] = push(src);
+        const out = line === undefined
+          ? fn(srcPtr, srcLen, lang)
+          : fn(srcPtr, srcLen, lang, line, character);
+        return JSON.parse(text(take(out).bytes));
+      } catch {
+        trapped = true;
+        return fallback;
+      } finally {
+        if (srcPtr !== 0) ex.rustyfi_dealloc(srcPtr, srcLen);
+      }
+    },
+
+    /// Whether the module has trapped. A trapped instance stays broken, so a
+    /// caller running anything on a timer must stop when it sees this.
+    get trapped() {
+      return trapped;
     },
 
     /// The package names a document may `@require:`, for one generation.
