@@ -6,8 +6,9 @@
 //! [`analyze`] is the seam the browser side was written against, and its
 //! contract has not moved: a list of positioned diagnostics over one source
 //! string, positions zero-based, characters counted in **UTF-16 code units**
-//! so they drop straight into a `textarea` (`setSelectionRange`, and the
-//! character cells of a mirrored overlay).
+//! — which is what a JavaScript string index and a CodeMirror document offset
+//! both already count, so the editor can place a marker without converting
+//! anything.
 //!
 //! What has moved is what stands behind it. [`Diag`] and [`Severity`] are no
 //! longer declared here — they are `rustyfi_lsp`'s own, re-exported — and the
@@ -117,24 +118,49 @@ fn severity_str(severity: Severity) -> &'static str {
 /// Parse first, compile only if that was silent — see the module comment for
 /// why both tiers are here and why this order is the cheap one.
 pub fn analyze(source: &str, lang: Lang) -> Vec<Diag> {
+    analyze_detected(source, lang).0
+}
+
+/// [`analyze`], also reporting the OTHER generation when the document is
+/// valid under it and not under the selected one.
+///
+/// The Lang selector is a deliberate click and is never overridden — see
+/// tier 1 below — but a document that parses cleanly as the other generation
+/// is the one case where the error on screen is about the selector rather
+/// than about the text. Saying which, and letting the page offer the switch,
+/// costs one extra parse and only on a document that is already failing.
+pub fn analyze_detected(source: &str, lang: Lang) -> (Vec<Diag>, Option<Lang>) {
     // Tier 1. `analyze`, not `analyze_auto`: the generation is not a guess
     // here, it is what the reader picked in the header's Lang selector, and
     // silently analysing 0.1 source under 0.0.6 because it happens to parse
     // would disagree with the Typeset button standing next to it.
     let parsed = rustyfi_lsp::analyze(source, lang.to_version());
     if !parsed.is_empty() {
-        return parsed;
+        let other = match lang {
+            Lang::V0_0 => Lang::V0_1,
+            Lang::V0_1 => Lang::V0_0,
+        };
+        let clean_as_other = rustyfi_lsp::analyze(source, other.to_version()).is_empty();
+        return (parsed, clean_as_other.then_some(other));
     }
     // Tier 2.
-    match crate::check_lang(source, lang) {
+    let diags = match crate::check_lang(source, lang) {
         Ok(()) => Vec::new(),
         Err(raw) => vec![from_compile_error(source, &raw)],
-    }
+    };
+    (diags, None)
 }
 
 /// [`analyze`], serialized as the JSON array the browser reads.
+///
+/// One optional field beyond a [`Diag`]'s six: `"otherLang"`, carried on the
+/// first diagnostic when the document parses cleanly as the generation the
+/// selector is NOT set to. The page turns it into an offer to switch, which
+/// is the whole of the answer to "the Lang selector paints a parse error on a
+/// valid document".
 pub fn analyze_json(source: &str, lang: Lang) -> String {
-    to_json(&analyze(source, lang))
+    let (diags, other) = analyze_detected(source, lang);
+    to_json_with(&diags, other)
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +335,7 @@ fn utf16_column(source: &str, line: u32, column: u32) -> u32 {
 ///
 /// Hand-rolled because this crate has no serializer and adding one to emit
 /// six fields would be a dependency for nothing.
-fn to_json(diags: &[Diag]) -> String {
+fn to_json_with(diags: &[Diag], other: Option<Lang>) -> String {
     let mut out = String::from("[");
     for (i, d) in diags.iter().enumerate() {
         if i > 0 {
@@ -325,7 +351,17 @@ fn to_json(diags: &[Diag]) -> String {
             severity_str(d.severity)
         ));
         escape_into(&mut out, &d.message);
-        out.push_str("\"}");
+        out.push('"');
+        if let (0, Some(other)) = (i, other) {
+            out.push_str(&format!(
+                ",\"otherLang\":{}",
+                match other {
+                    Lang::V0_0 => 0,
+                    Lang::V0_1 => 1,
+                }
+            ));
+        }
+        out.push('}');
     }
     out.push(']');
     out
@@ -338,7 +374,7 @@ fn to_json(diags: &[Diag]) -> String {
 /// control character would make the whole array unparseable — which, since the
 /// page runs this on every pause in typing, would take the feature out
 /// silently on exactly the documents that most need it.
-fn escape_into(out: &mut String, text: &str) {
+pub(crate) fn escape_into(out: &mut String, text: &str) {
     for c in text.chars() {
         match c {
             '"' => out.push_str("\\\""),
@@ -557,20 +593,20 @@ mod tests {
 
     #[test]
     fn json_is_parseable_when_the_message_carries_quotes_and_newlines() {
-        let json = to_json(&[Diag {
+        let json = to_json_with(&[Diag {
             line: 1,
             character: 2,
             end_line: 1,
             end_character: 5,
             severity: Severity::Error,
             message: "a \"quoted\" \\ thing\nover two lines\u{1}".into(),
-        }]);
+        }], None);
         assert!(json.contains(r#""severity":"error""#), "{json}");
         assert!(json.contains(r#"\"quoted\""#), "{json}");
         assert!(json.contains(r"\\ thing\n"), "{json}");
         // A raw control character would make the whole array unparseable.
         assert!(json.contains("\\u0001"), "{json}");
-        assert_eq!(to_json(&[]), "[]");
+        assert_eq!(to_json_with(&[], None), "[]");
         // The two severities the local copy of this enum did not have still
         // have a spelling, so a future warning cannot serialize as an error.
         for (s, want) in [
