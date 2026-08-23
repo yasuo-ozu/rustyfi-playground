@@ -4,10 +4,17 @@
 SATySFi typesetter — compiled to WebAssembly and running in a browser tab. You
 type a `.saty` document, the module typesets it, and the PDF appears beside it:
 **typesetting never leaves the tab**, and there is no package manager to reach
-for. Mistakes are underlined in the editor as you type, without waiting for a
-typeset — the same `rustyfi-lsp` analysis a desktop editor gets, backed by a
-whole-program check the browser can run because the corpus is compiled in. See
-[Live diagnostics](playground/README.md#live-diagnostics).
+for.
+
+The editor is a real one — mistakes are underlined as you type, hovering a name
+says what it is and which package declares it, completion offers that package's
+vocabulary, and Ctrl-click jumps to a definition. All of it comes from
+`rustyfi-lsp`, the typesetter's own language server, minus the protocol; what
+makes it answer about packages rather than shrugging is that the browser has
+the whole corpus compiled in and can resolve the document's `@require:` graph,
+which a detached editor buffer cannot. See
+[Live diagnostics](playground/README.md#live-diagnostics) and
+[Editor navigation](playground/README.md#editor-navigation).
 
 The one exception is deliberate and opt-in: the **Share** button builds a URL
 that carries your document, and shortening that URL hands it to a third-party
@@ -30,6 +37,8 @@ page always corresponds to one identifiable rustyfi commit.
 rustyfi/                    the typesetter, as a git submodule (pinned)
 crates/rustyfi-wasm/        the wasm entry point: a cdylib exposing a C ABI
 playground/                 the page, its glue, and an offline self-test
+playground/vendor/          the editor, bundled and committed (nothing is fetched)
+editor/                     what builds that bundle; not needed to serve the page
 .github/workflows/pages.yml build -> self-test -> deploy
 .github/workflows/bump.yml  daily: move the pin to rustyfi's main
 ```
@@ -97,6 +106,7 @@ whose licence file is missing, so the two cannot drift apart.
 | `base` | [nyuichi/satysfi-base](https://github.com/nyuichi/satysfi-base) | MIT |
 | `easytable`, `enumitem`, `figbox`, `railway`, `class-slydifi` | [monaqa](https://github.com/monaqa) | MIT |
 | `latexcmds`, `xpath` | [yasuo-ozu](https://github.com/yasuo-ozu) | LGPL-3.0 |
+| CodeMirror 6 (the editor, `playground/vendor/`) | [codemirror](https://github.com/codemirror) | MIT |
 
 Two projects from rustyfi's layout-test corpus are **deliberately not bundled**:
 `fss`, whose upstream repository ships no licence text (its `satysfi-fss.opam`

@@ -25,7 +25,8 @@ $ python3 -m http.server -d playground 8000
 ```
 
 Then open <http://localhost:8000>. It has to be http(s): both module scripts
-and `WebAssembly.instantiateStreaming` are blocked on `file://` URLs.
+and `WebAssembly.instantiateStreaming` are blocked on `file://` URLs. The
+editor bundle is committed, so there is nothing to build for it.
 
 Two licence links in the packages panel 404 in this setup: `LICENSE.LGPL-3.0`
 and `LICENSE.GPL-3.0` live in the `rustyfi/` submodule and are copied into
@@ -36,13 +37,12 @@ suffixes) if you want them locally, and do not commit the result.
 
 ## Live diagnostics
 
-The editor underlines mistakes as you type, and lists them underneath with a
-click that jumps to the offending text. Nothing is fetched and no editor
-library is involved: the source is a plain `<textarea>` with a second, inert
-copy of the same text mirrored beneath it, carrying the underlines. The two
-layers share every declaration that decides where a character lands
-(`#editor .layer`), which is what keeps a wavy underline on the right character
-of a soft-wrapped line of Japanese.
+The editor underlines mistakes as you type, marks them in the gutter, and
+lists them underneath with a click that jumps to the offending text. The
+editor is CodeMirror 6, **vendored** — see [The editor](#the-editor) — so
+nothing is fetched at runtime; the underlines are its own decorations, which
+means they are *mapped through your edits* rather than being absolute offsets
+into a mirror of the text that has to be taken down the moment you type.
 
 Analysis runs on the module's own `rustyfi_diagnostics` export, which is **two
 tiers**:
@@ -84,10 +84,11 @@ idle stays roughly constant across document sizes rather than being right for
 one of them.
 
 Positions come back **zero-based, with columns in UTF-16 code units**, which is
-exactly what `textarea.setSelectionRange` and `String.prototype.slice` count. A
-byte offset would be right only for ASCII and would misplace every marker in a
-Japanese document — the self-test pins this with a fixture whose byte and
-UTF-16 columns genuinely differ.
+exactly what a JavaScript string index and a CodeMirror document offset already
+count. A byte offset would be right only for ASCII and would misplace every
+marker in a Japanese document — the self-test pins this with fixtures whose
+byte and UTF-16 columns genuinely differ, for the diagnostics and for hover and
+go-to-definition alike.
 
 Two honest limitations, both stated on the page itself:
 
@@ -102,14 +103,120 @@ Two honest limitations, both stated on the page itself:
   zero-width one (an unexpected end of input) is widened so there is still a
   character to draw under.
 
-The crate's other protocol-free features — `hover`, `definition`,
-`completions`, `document_symbols` — are **deliberately not wired up**. They are
-single-file scoped by design, and a playground document is almost entirely
-package vocabulary. Measured across the 24 examples this page ships: hover
-answers at a median 20% of cursor positions, go-to-definition at 5%, and
-completions return nothing at all on 13 of the 24. An outline would be one or
-two entries on 14 of them. A popup that is empty four times out of five is
-worse than no popup.
+One more thing the analysis reports, and it is about the **Lang selector**
+rather than about your text: when a document fails to parse as the selected
+generation but parses cleanly as the other, the problem row carries a *parses
+as 0.1 — switch* button. The selector is never overridden silently (it says how
+to read what is in the editor, which is a decision that belongs to you), but a
+valid document underlined end to end because the wrong generation is selected
+is the one case where the error is not where the reader is looking.
+
+## Editor navigation
+
+Hover, completion, go-to-definition and an outline, out of the same module and
+the same `rustyfi_lsp` half — plus the **`@require:` index** described below,
+which is what makes them answer about package vocabulary rather than shrugging.
+
+| | how you get it | what it does |
+|---|---|---|
+| hover | point at a name | says what it is, which package declares it, and the type its author wrote |
+| completion | type `\`, `+`, `#` or `Module.`, or press <kbd>Ctrl</kbd>-<kbd>Space</kbd> | offers names in scope in this buffer, then names the required packages declare |
+| definition | <kbd>Ctrl</kbd>-click or <kbd>F12</kbd> | jumps, if the name is bound in this document; otherwise says which package it comes from |
+| outline | the *n declarations…* picker in the pane heading | jumps to any declaration; hidden below two |
+
+### Why a dependency index
+
+`rustyfi_lsp`'s cursor half is **single-file scoped**, deliberately: a detached
+buffer has no program behind it, so a name it does not bind is answered with
+silence rather than invention. That is the same ceiling tier 1 of the
+diagnostics has, and on a playground document it is severe — the document is
+almost entirely package vocabulary (`document`, `+p`, `\emph`, `List.map`), and
+none of it is bound in the buffer. Wired up as-is, hover would say no more than
+"an inline command, from somewhere else" and completion would have nothing at
+all to offer on most of the examples here.
+
+So the browser does what a detached editor cannot: it **resolves the document's
+`@require:`/`@import:` graph** — through the loader's own `resolve_require`,
+against the corpus compiled into the module — builds a `rustyfi_lsp::Model` per
+dependency file, and indexes what each one declares. Hover then answers out of
+the package's own source: which module, how it was written (`direct`, `val`,
+`let-inline`), and the type text its author wrote, quoted rather than inferred.
+
+Measured over the 154 command sites (`\cmd`, `+cmd`) in the 24 examples this
+page ships: **92% get a hover, and 90% of all of them name a package** — that
+is, nearly every hover that answers does so because of the index. **86% of
+command prefixes offer at least one completion**, against nothing at all before.
+
+It stays honest about what it knows. An index entry proves that a required
+package *declares* that spelling, not that the name is in scope at your cursor,
+and the wording says "declared by", never "bound here". Completion offers a
+module's members unqualified only where the document actually wrote `open` on
+it.
+
+### Silence is the normal answer
+
+Most positions in a SATySFi document are prose, and a hover that fires on every
+word of a paragraph is worse than one that never fires. Over *all* cursor
+positions rather than command sites, hover answers about a quarter of the time,
+and that is the design rather than a shortfall. Completion is stricter still:
+it needs a sigil, a `Module.` prefix or an explicit <kbd>Ctrl</kbd>-<kbd>Space</kbd>,
+and when it has nothing to say **no popup appears at all** — an empty popup is
+something to dismiss, which is what makes a quiet completion feel broken.
+
+Go-to-definition lands in this buffer about one time in twenty, so it is not
+advertised in the interface, only in the hint line under the editor. When the
+name comes from a package — which this page cannot open, having one buffer — it
+says so in a toast instead of doing nothing.
+
+### Cost
+
+The index is the one expensive thing: one parse per dependency file, 1–130 ms
+depending on the graph (thirteen files for a `stdjabook` document). It is
+**cached against the document's header lines** and built on an idle callback
+after an analysis, so ordinary typing never rebuilds it and no hover ever waits
+for it. A hover itself is one parse of the buffer — 0.06 ms on a small
+document, 2.6 ms on the largest example here — and a completion is that plus a
+filter over the index. Everything runs on the main thread, as the rest of this
+page does.
+
+The outline is deliberately read out of the same `Model` and **not** out of
+`rustyfi_lsp::document_symbols`, which is the better structure and costs
+**1,014,881 bytes of WebAssembly** — measured, by building the module with and
+without the call. That is four times what hover, definition and completion
+together add (265,862 bytes), because it instantiates `Unparse` over both
+grammars' entire CSTs to get each declaration's exact extent. A jump list does
+not earn a megabyte on every page load.
+
+## The editor
+
+CodeMirror 6, **committed to this repository** under `vendor/codemirror.js` and
+served from this origin. The page fetches nothing at runtime — no CDN, no
+external stylesheet, no remote font — and the editor is the first dependency it
+has ever had, so it is vendored rather than linked. The self-test fails the
+deploy if the page grows an absolute URL, or if the bundle contains an import
+that did not get resolved.
+
+- **362,651 bytes, 115 kB gzipped**, against a WebAssembly module of 7.6 MB /
+  2.0 MB gzipped: about 5% more to download.
+- Assembled from six `@codemirror/*` packages and their dependencies —
+  `basicSetup` is deliberately not used, since it would add search, folding and
+  bracket auto-closing that this page does not want.
+- All MIT. `editor/build.mjs` regenerates
+  `licenses/LICENSE-codemirror-MIT.txt` from the licence text of every package
+  that actually ended up in the bundle, read off esbuild's own input list, so a
+  new transitive dependency cannot ship unattributed.
+
+Rebuild it with:
+
+```console
+$ cd editor && npm install && npm run build
+```
+
+The deploy does **not** run that — it copies what is committed. A syntax
+highlighting mode for SATySFi is the page's own code, not part of the bundle: a
+stream tokenizer that knows comments, string literals, command names, headers,
+numbers with units and the keyword list. It is not a grammar and does not
+pretend to parse.
 
 ## Checking it without a browser
 
@@ -134,7 +241,8 @@ deploy must not be gated on a third party being up.
 | `packages.js` | who wrote each bundled package, which release it is, and under what licence |
 | `share.js` | the `?src=` codec and the shortener call, likewise shared with the self-test |
 | `selftest.mjs` | the offline end-to-end check |
-| `licenses/` | the upstream licence text of every bundled third-party package |
+| `vendor/codemirror.js` | the editor, bundled from `editor/` and served from this origin |
+| `licenses/` | the upstream licence text of every bundled third-party package, and of the editor |
 
 `packages.js` is checked against the module's real package list by the
 self-test, in both directions: a package baked in with no entry fails the
