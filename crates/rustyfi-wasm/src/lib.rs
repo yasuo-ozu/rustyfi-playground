@@ -78,6 +78,15 @@
 //! [`diagnostics`] module for why both are here — the short version is that
 //! the LSP crate's own second tier resolves a dependency graph off a disk,
 //! and [`EmbeddedCorpus`] is what a browser has instead.
+//!
+//! # Editor navigation
+//!
+//! [`interactive`] is the same trade one step further: hover, go to
+//! definition, completion and the outline, out of `rustyfi_lsp`'s
+//! cursor-driven half, with the names a *detached* buffer cannot resolve
+//! looked up in the `@require:` graph that [`EmbeddedCorpus`] makes
+//! resolvable. Its entry points are [`rustyfi_hover`],
+//! [`rustyfi_definition`], [`rustyfi_completions`] and [`rustyfi_symbols`].
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -85,6 +94,7 @@ use std::path::{Path, PathBuf};
 use rustyfi_loader::{LoadOptions, SourceProvider};
 
 pub mod diagnostics;
+pub mod interactive;
 
 include!(concat!(env!("OUT_DIR"), "/corpus.rs"));
 
@@ -745,6 +755,143 @@ pub unsafe extern "C" fn rustyfi_diagnostics(src: *const u8, len: usize, lang: u
             bytes: diagnostics::analyze_json(source, Lang::from_u32(lang)).into_bytes(),
         },
         Err(e) => Output::from_result(Err(format!("document source is not valid UTF-8: {e}"))),
+    }
+    .into_raw()
+}
+
+/// Read a borrowed UTF-8 buffer, or `None` when it is null, empty or not
+/// UTF-8.
+///
+/// The four cursor entry points below all answer "nothing here" rather than
+/// failing for a buffer they cannot read: they run unattended, on mouseover
+/// and on keystrokes, and an error channel nobody checks is worse than a
+/// silence the caller already has to handle.
+///
+/// # Safety
+/// `src` must point to `len` readable bytes for the duration of the call.
+unsafe fn borrow_str<'a>(src: *const u8, len: usize) -> Option<&'a str> {
+    if src.is_null() || len == 0 {
+        return None;
+    }
+    std::str::from_utf8(unsafe { std::slice::from_raw_parts(src, len) }).ok()
+}
+
+/// Describe what is at a cursor, as a JSON object — or the four bytes `null`.
+///
+/// ```json
+/// {"line":3,"character":8,"endLine":3,"endCharacter":13,"markdown":"…"}
+/// ```
+///
+/// The range is the word the answer is about, positioned exactly as
+/// [`rustyfi_diagnostics`] positions a diagnostic: zero-based lines,
+/// characters in UTF-16 code units. `line`/`character` in the REQUEST are in
+/// those same units, so an editor hands over what it already has.
+///
+/// # Safety
+/// `src` must point to at least `len` readable bytes for the duration of the
+/// call. A null `src` is only valid with `len == 0`.
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_hover(
+    src: *const u8,
+    len: usize,
+    lang: u32,
+    line: u32,
+    character: u32,
+) -> *mut Output {
+    let json = match unsafe { borrow_str(src, len) } {
+        Some(source) => interactive::hover_json(source, Lang::from_u32(lang), line, character),
+        None => "null".to_string(),
+    };
+    Output {
+        ok: true,
+        bytes: json.into_bytes(),
+    }
+    .into_raw()
+}
+
+/// Where the name at a cursor is defined, as JSON — see
+/// [`interactive::definition_json`] for the three shapes.
+///
+/// # Safety
+/// As [`rustyfi_hover`].
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_definition(
+    src: *const u8,
+    len: usize,
+    lang: u32,
+    line: u32,
+    character: u32,
+) -> *mut Output {
+    let json = match unsafe { borrow_str(src, len) } {
+        Some(source) => interactive::definition_json(source, Lang::from_u32(lang), line, character),
+        None => "null".to_string(),
+    };
+    Output {
+        ok: true,
+        bytes: json.into_bytes(),
+    }
+    .into_raw()
+}
+
+/// Completion candidates for a cursor, as a JSON array. Empty is an ordinary
+/// answer — see [`interactive::completions_json`].
+///
+/// # Safety
+/// As [`rustyfi_hover`].
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_completions(
+    src: *const u8,
+    len: usize,
+    lang: u32,
+    line: u32,
+    character: u32,
+) -> *mut Output {
+    let json = match unsafe { borrow_str(src, len) } {
+        Some(source) => {
+            interactive::completions_json(source, Lang::from_u32(lang), line, character)
+        }
+        None => "[]".to_string(),
+    };
+    Output {
+        ok: true,
+        bytes: json.into_bytes(),
+    }
+    .into_raw()
+}
+
+/// The document's outline, as a JSON array of nested nodes.
+///
+/// # Safety
+/// As [`rustyfi_hover`].
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_symbols(src: *const u8, len: usize, lang: u32) -> *mut Output {
+    let json = match unsafe { borrow_str(src, len) } {
+        Some(source) => interactive::symbols_json(source, Lang::from_u32(lang)),
+        None => "[]".to_string(),
+    };
+    Output {
+        ok: true,
+        bytes: json.into_bytes(),
+    }
+    .into_raw()
+}
+
+/// Build the document's `@require:` index and report what is in it, as JSON.
+///
+/// The page calls this on an idle callback so that the first hover does not
+/// have to wait for the index — see [`interactive::index_json`].
+///
+/// # Safety
+/// As [`rustyfi_hover`].
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_index(src: *const u8, len: usize, lang: u32) -> *mut Output {
+    let json = match unsafe { borrow_str(src, len) } {
+        Some(source) => interactive::index_json(source, Lang::from_u32(lang)),
+        None => "{\"files\":0,\"names\":0,\"packages\":[],\"unresolved\":[]}".to_string(),
+    };
+    Output {
+        ok: true,
+        bytes: json.into_bytes(),
     }
     .into_raw()
 }
