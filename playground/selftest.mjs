@@ -674,6 +674,320 @@ document (|title = {t}; author = {a};|) '<
   }
 }
 
+// 12. THE CURSOR-DRIVEN FEATURES: hover, completion, go to definition, the
+//     outline, and the `@require:` index the first three answer package
+//     vocabulary out of.
+//
+//     The property that matters most here is not "it answers" but "it answers
+//     ABOUT THE RIGHT TEXT". Every position in and out is zero-based with
+//     UTF-16 columns, so each check below slices the JavaScript string with
+//     the numbers the module returned and asserts what it finds — the same
+//     discipline the diagnostics checks use, and for the same reason: a byte
+//     offset would pass every ASCII test and be wrong on half this corpus.
+{
+  const DOC = `@require: stdja-mini
+@require: annot
+let greeting = {Hello} in
+document (|title = {t}; author = {a};|) '<
+  +p { \\href(\`https://example.invalid\`){\\emph{x}} #greeting; }
+>
+`;
+  const lines = DOC.split("\n");
+  /// The zero-based UTF-16 position of `needle`, `offset` characters in.
+  const at = (text, needle, offset = 0) => {
+    const abs = text.indexOf(needle) + offset;
+    const before = text.slice(0, abs);
+    const line = before.split("\n").length - 1;
+    return [line, abs - (before.lastIndexOf("\n") + 1)];
+  };
+  /// What the module's own range covers, sliced out of the document with its
+  /// own numbers.
+  const covered = (text, r) => {
+    const rows = text.split("\n");
+    return r.line === r.endLine
+      ? rows[r.line].slice(r.character, r.endCharacter)
+      : rows[r.line].slice(r.character);
+  };
+
+  // The index first: everything else answers out of it.
+  const index = rustyfi.index(DOC, 0);
+  check("the @require: index resolves the document's packages",
+    index.files >= 2 && index.names > 10 && index.unresolved.length === 0,
+    JSON.stringify(index));
+  check("…and names the packages it read", index.packages.includes("annot"),
+    index.packages.join(", "));
+  {
+    const missing = rustyfi.index(DOC.replace("@require: annot", "@require: nope"), 0);
+    check("an unresolvable @require: is reported by the index",
+      missing.unresolved.includes("nope"), JSON.stringify(missing));
+  }
+
+  // HOVER on a name the document itself binds: answered from the buffer.
+  {
+    const [l, c] = at(DOC, "greeting", 2);
+    const h = rustyfi.hover(DOC, 0, l, c);
+    check("hover describes a name this document binds", h !== null && /bound by/.test(h.markdown),
+      JSON.stringify(h));
+    check("…and its range covers exactly that word", h && covered(DOC, h) === "greeting",
+      h ? JSON.stringify(covered(DOC, h)) : "no answer");
+  }
+  // HOVER on a name only a PACKAGE binds. This is the case the whole
+  // dependency index exists for: single-file analysis can say no more than
+  // "an inline command, from somewhere else", and 90% of the command sites in
+  // the examples this page ships are of this kind.
+  {
+    const [l, c] = at(DOC, "\\href", 2);
+    const h = rustyfi.hover(DOC, 0, l, c);
+    check("hover names the package a command comes from",
+      h !== null && /package `annot`/.test(h.markdown), JSON.stringify(h));
+    check("…and quotes the type its author wrote",
+      h !== null && /inline-cmd/.test(h.markdown), h ? h.markdown : "");
+    check("…and says it is not bound here, rather than implying it is",
+      h !== null && /Not bound in this document/.test(h.markdown), h ? h.markdown : "");
+  }
+  // HOVER on a header says what it resolved to, out of the same index.
+  {
+    const [l, c] = at(DOC, "stdja-mini", 2);
+    const h = rustyfi.hover(DOC, 0, l, c);
+    check("hover on a @require: says which file it resolved to",
+      h !== null && /dist\/packages\/stdja-mini/.test(h.markdown), JSON.stringify(h));
+  }
+  // …and PROSE answers nothing. A hover that fires on every word of a
+  // paragraph is worse than one that never fires at all.
+  {
+    const [l, c] = at(DOC, "Hello", 2);
+    check("hover on prose answers nothing", rustyfi.hover(DOC, 0, l, c) === null);
+  }
+
+  // THE UTF-16 CHECK for the cursor features, on the same principle as the
+  // diagnostics one: a Japanese string before the name on the SAME LINE, so
+  // that a byte column and a UTF-16 column disagree by fourteen.
+  {
+    const CJK = `@require: stdja-mini
+let name = 1 in
+let s = \`吾輩は猫である\` in let second = name in
+document (|title = {t}; author = {a};|) '< +p { x } >
+`;
+    const [l, c] = at(CJK, "name in");
+    const row = CJK.split("\n")[l];
+    const bytes = Buffer.byteLength(row.slice(0, c), "utf8");
+    check("the CJK fixture really distinguishes bytes from UTF-16", bytes !== c,
+      `both are ${c}`);
+    const h = rustyfi.hover(CJK, 0, l, c);
+    check("hover after Japanese text answers about the name under the cursor",
+      h !== null && covered(CJK, h) === "name",
+      h ? JSON.stringify(covered(CJK, h)) : "no answer");
+    // The byte column, handed over as if it were a character column, must NOT
+    // answer the same thing — otherwise the check above would pass for a
+    // module that had confused the two.
+    const wrong = rustyfi.hover(CJK, 0, l, bytes);
+    check("…and the byte column would have answered about something else",
+      wrong === null || covered(CJK, wrong) !== "name",
+      wrong ? JSON.stringify(covered(CJK, wrong)) : "nothing");
+    // Go to definition lands on the binding, whose own columns are ASCII.
+    const d = rustyfi.definition(CJK, 0, l, c);
+    check("definition after Japanese text lands on the binding",
+      d !== null && d.kind === "here" && covered(CJK, d) === "name", JSON.stringify(d));
+    check("…on the line the binding is written on", d !== null && d.line === 1,
+      JSON.stringify(d));
+  }
+
+  // COMPLETION. Only ever after a sigil or a `Module.` prefix — the page will
+  // not even ask otherwise — and an empty answer means "show no popup".
+  {
+    const typing = `@require: stdja-mini
+@require: annot
+document (|title = {t}; author = {a};|) '<
+  +p { \\hr }
+>
+`;
+    const [l, c] = at(typing, "\\hr", 3);
+    const items = rustyfi.completions(typing, 0, l, c);
+    check("completion after a backslash offers the package's commands",
+      items.some((i) => i.label === "\\href"), JSON.stringify(items.slice(0, 4)));
+    const href = items.find((i) => i.label === "\\href");
+    check("…each carrying the fields the popup shows",
+      href !== undefined && typeof href.detail === "string" && href.source === "annot" &&
+        Number.isInteger(href.kind), JSON.stringify(href));
+    check("…and a range that replaces the sigil too, so the insert is not doubled",
+      href !== undefined && covered(typing, href) === "\\hr", JSON.stringify(href));
+    // Prose gets nothing at all.
+    const [pl, pc] = at(typing, "+p {", 4);
+    check("completion in prose offers nothing",
+      rustyfi.completions(typing, 0, pl, pc).length === 0);
+  }
+  // A QUALIFIED command puts its sigil in front of the module path, so the
+  // member is inserted WITHOUT one. `+StdJa.+section` would be the bug.
+  {
+    const v01 = `@require: std-ja
+
+StdJa.document (| title = {t}; author = {a} |) '<
+  +StdJa.
+>
+`;
+    const [l, c] = at(v01, "+StdJa.\n", 7);
+    const items = rustyfi.completions(v01, 1, l, c);
+    check("a qualified command completes to its bare member name",
+      items.some((i) => i.label === "section"), JSON.stringify(items.slice(0, 4)));
+    check("…and never re-inserts the sigil",
+      items.every((i) => !i.label.startsWith("+")), JSON.stringify(items.slice(0, 4)));
+  }
+
+  // DEFINITION on a name from a package cannot jump — this page has one
+  // buffer — so it says where the name comes from instead of doing nothing.
+  {
+    const [l, c] = at(DOC, "\\href", 2);
+    const d = rustyfi.definition(DOC, 0, l, c);
+    check("definition of a package name says which package",
+      d !== null && d.kind === "package" && /annot/.test(d.detail), JSON.stringify(d));
+  }
+
+  // THE OUTLINE.
+  {
+    const symbols = rustyfi.symbols(DOC, 0);
+    check("the outline lists the document's own declarations",
+      symbols.some((s) => s.name === "greeting" && s.depth === 0),
+      JSON.stringify(symbols));
+    check("…positioned so a jump lands on the name",
+      symbols.every((s) => covered(DOC, s).length > 0), JSON.stringify(symbols));
+    check("…and does not list package names as declarations",
+      !symbols.some((s) => s.name === "stdja-mini"), JSON.stringify(symbols));
+  }
+
+  // COVERAGE, over every example the page ships. Not a target — the features
+  // are allowed to be silent, and in prose they must be — but a floor: a
+  // regression that broke the dependency index would take these to zero while
+  // every check above still passed on its own hand-written fixture.
+  {
+    let sites = 0, answered = 0, fromCorpus = 0, offered = 0;
+    for (const example of EXAMPLES) {
+      const lang = example.lang ?? 0;
+      const text = example.source;
+      const rows = text.split("\n");
+      const lineStart = [0];
+      for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) lineStart.push(i + 1);
+      const lc = (abs) => {
+        let line = 0;
+        while (line + 1 < lineStart.length && lineStart[line + 1] <= abs) line++;
+        return [line, abs - lineStart[line]];
+      };
+      rustyfi.index(text, lang);
+      for (const m of text.matchAll(/[\\+][A-Za-z][A-Za-z0-9-]*/g)) {
+        sites++;
+        const [l, c] = lc(m.index + 1);
+        const h = rustyfi.hover(text, lang, l, c);
+        if (h) {
+          answered++;
+          if (/package `/.test(h.markdown)) fromCorpus++;
+        }
+        const [el, ec] = lc(m.index + m[0].length);
+        if (rustyfi.completions(text, lang, el, ec).length > 0) offered++;
+      }
+      void rows;
+    }
+    const pct = (n) => Math.round((100 * n) / sites);
+    console.log(
+      `     ${sites} command sites across the examples: ${pct(answered)}% hover, ` +
+      `${pct(fromCorpus)}% of them naming a package, ${pct(offered)}% offer a completion`,
+    );
+    check("hover answers at most command sites", pct(answered) >= 85, `${pct(answered)}%`);
+    check("most of those answers come from the bundled corpus", pct(fromCorpus) >= 80,
+      `${pct(fromCorpus)}%`);
+    check("completion answers at most command prefixes", pct(offered) >= 75, `${pct(offered)}%`);
+  }
+
+  // None of this may wedge the module. It runs on mouseover and on
+  // keystrokes, unattended, so a document that killed the instance would take
+  // the page down without anyone pressing anything.
+  for (const nasty of ["", " ", "\\", "@require:", "{{{{{{{{", "${\\", "let x = 𠮷 in"]) {
+    for (const lang of [0, 1]) {
+      for (const [l, c] of [[0, 0], [0, 1], [1, 0], [99, 99]]) {
+        rustyfi.hover(nasty, lang, l, c);
+        rustyfi.definition(nasty, lang, l, c);
+        rustyfi.completions(nasty, lang, l, c);
+      }
+      rustyfi.symbols(nasty, lang);
+      rustyfi.index(nasty, lang);
+    }
+  }
+  check("the cursor features do not trap on rubbish", !rustyfi.trapped);
+  const stillWorks = rustyfi.compile(HELLO);
+  check("…and the module still typesets afterwards", stillWorks.ok,
+    stillWorks.ok ? "" : stillWorks.error);
+}
+
+// 13. THE LANG SELECTOR'S OWN MISTAKE.
+//
+//     A 0.1 document analysed as 0.0.6 is underlined from end to end, and the
+//     mistake is the selector rather than the text. The extra `otherLang`
+//     field is what lets the page offer the switch instead of leaving the
+//     reader to work it out.
+{
+  const v01 = "@require: v01-mini\n\nlet open V01Mini in\ndocument (| title = `v01` |) '<\n" +
+    "  +p { Hello from 0.1. }\n>\n";
+  const wrong = rustyfi.diagnostics(v01, 0);
+  check("a 0.1 document read as 0.0.6 says it parses as 0.1",
+    wrong.ok && wrong.diagnostics.length === 1 && wrong.diagnostics[0].otherLang === 1,
+    wrong.ok ? JSON.stringify(wrong.diagnostics) : wrong.error);
+  const right = rustyfi.diagnostics(v01, 1);
+  check("…and there is nothing to offer when it is read correctly",
+    right.ok && right.diagnostics.length === 0, JSON.stringify(right.diagnostics ?? right.error));
+  // A document that is broken under BOTH generations must not offer a switch
+  // that would fix nothing.
+  const broken = rustyfi.diagnostics("@require: stdja-mini\ndocument >>> '<", 0);
+  check("a document broken either way offers no switch",
+    broken.ok && broken.diagnostics.length === 1 &&
+      broken.diagnostics[0].otherLang === undefined,
+    broken.ok ? JSON.stringify(broken.diagnostics) : broken.error);
+}
+
+// 14. THE VENDORED EDITOR.
+//
+//     The page must fetch NOTHING at runtime: it is served from GitHub Pages
+//     with no CDN, no external stylesheet and no remote font, and the editor
+//     is the first dependency it has ever had. So the bundle is committed, and
+//     these checks are what keep it that way — a `<script src="https://…">`
+//     slipped into the page would work perfectly in a browser with a network
+//     and break the moment one is missing, which is exactly the failure this
+//     playground exists not to have.
+{
+  const read = async (rel) => readFile(new URL(`./${rel}`, import.meta.url), "utf8");
+  const bundle = await read("vendor/codemirror.js").catch(() => null);
+  check("the editor bundle is committed", bundle !== null && bundle.length > 100_000,
+    bundle === null ? "playground/vendor/codemirror.js is missing" : `${bundle.length} bytes`);
+  if (bundle !== null) {
+    console.log(`     editor bundle: ${bundle.length} bytes`);
+    // A bundler that left an import unresolved would emit a bare or absolute
+    // specifier, and the page would then try to fetch it.
+    check("the bundle imports nothing at runtime",
+      !/\bfrom\s*["'][^."'][^"']*["']/.test(bundle) && !/\bimport\s*\(/.test(bundle),
+      "an unresolved import survived bundling");
+    check("the bundle contains no absolute URL",
+      !/https?:\/\/(?!www\.w3\.org|codemirror\.net)/.test(bundle),
+      (bundle.match(/https?:\/\/\S{0,40}/g) ?? []).slice(0, 3).join(" "));
+  }
+  const notice = await read("licenses/LICENSE-codemirror-MIT.txt").catch(() => null);
+  check("the editor's licences travel with it", notice !== null && /MIT/.test(notice ?? ""),
+    "playground/licenses/LICENSE-codemirror-MIT.txt is missing");
+  if (notice !== null && bundle !== null) {
+    // Every package the bundle actually contains has to be named in the
+    // notice. `editor/build.mjs` generates it from esbuild's own input list,
+    // so a drift here means the bundle was rebuilt by hand.
+    for (const pkg of ["@codemirror/state", "@codemirror/view", "@lezer/highlight", "style-mod"]) {
+      check(`${pkg} is named in the licence notice`, notice.includes(pkg));
+    }
+  }
+  const page = await read("index.html");
+  // Every URL the page loads has to be relative. The two absolute ones it
+  // carries are LINKS a reader may click, not resources it fetches.
+  const fetched = [...page.matchAll(/(?:src|href)="([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((u) => /^https?:/.test(u))
+    .filter((u) => !/github\.com|opensource\.org/.test(u));
+  check("the page fetches nothing from another origin", fetched.length === 0, fetched.join(" "));
+  check("the page loads the vendored editor", /from "\.\/vendor\/codemirror\.js"/.test(page));
+}
+
 // A link a browser cannot decode must SAY so rather than load garbage.
 let refused = null;
 try {
