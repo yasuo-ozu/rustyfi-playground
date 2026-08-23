@@ -295,6 +295,14 @@
     </select>
   </label>
 
+  <label class="ctl" title="PDF is the page-faithful output. HTML is one continuous, self-contained web document — no pages, and the browser does the line breaking.">
+    Output
+    <select id="format">
+      <option value="pdf" selected>PDF</option>
+      <option value="html">HTML</option>
+    </select>
+  </label>
+
   <details class="pop" id="pkgs">
     <summary>Packages <span class="n" id="pkgcount"></span></summary>
     <div class="popbody">
@@ -347,7 +355,7 @@
       </p>
     </section>
     <section class="pane">
-      <h2>PDF <span id="dl"></span></h2>
+      <h2><span id="panelabel">PDF</span> <span id="dl"></span></h2>
       <div class="empty" id="placeholder">Nothing typeset yet.</div>
       <iframe id="preview" title="Typeset PDF" style="display:none"></iframe>
       <pre id="error"></pre>
@@ -382,6 +390,9 @@ const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
 const errorEl = $("error");
 const previewEl = $("preview");
+const formatEl = $("format");
+/// `"pdf"` or `"html"` — which serialization the Typeset button produces.
+const currentFormat = () => formatEl.value;
 const placeholderEl = $("placeholder");
 const compileBtn = $("compile");
 const shareBtn = $("share");
@@ -658,7 +669,9 @@ async function loadBundledFont() {
 /// an error from lingering beside a successful render.
 function showPane(which) {
   placeholderEl.style.display = which === "placeholder" ? "grid" : "none";
-  previewEl.style.display = which === "pdf" ? "block" : "none";
+  // One iframe serves both outputs: a PDF blob the browser's viewer renders,
+  // or the HTML document itself.
+  previewEl.style.display = which === "pdf" || which === "html" ? "block" : "none";
   errorEl.style.display = which === "error" ? "block" : "none";
 }
 
@@ -668,6 +681,7 @@ function showError(message) {
 }
 
 function showPdf(bytes) {
+  $("panelabel").textContent = "PDF";
   if (blobUrl) URL.revokeObjectURL(blobUrl);
   blobUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
   previewEl.src = blobUrl;
@@ -684,6 +698,36 @@ function showPdf(bytes) {
   $("dl").append("— ", a);
 }
 
+/// The HTML output, shown in the same iframe.
+///
+/// A blob URL rather than `srcdoc`: the document is a whole page with its own
+/// `<style>`, and a blob gives the same "download" affordance the PDF has. It
+/// is safe to frame as-is — the writer emits no script and fetches nothing, an
+/// invariant its own test suite pins — so the frame needs no sandbox to make
+/// it so.
+function showHtml(html) {
+  $("panelabel").textContent = "HTML";
+  if (blobUrl) URL.revokeObjectURL(blobUrl);
+  blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+  previewEl.src = blobUrl;
+  previewEl.title = "Typeset HTML";
+  showPane("html");
+  $("dl").innerHTML = "";
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = "document.html";
+  a.textContent = "download";
+  a.style.fontWeight = "400";
+  a.style.textTransform = "none";
+  $("dl").append("— ", a);
+}
+
+formatEl.addEventListener("change", () => {
+  // Only re-render if the pane is already showing a result; switching format
+  // before the first Typeset should not start a compile on its own.
+  if (previewEl.style.display !== "none") typeset();
+});
+
 function typeset() {
   if (!rustyfi) return;
   compileBtn.disabled = true;
@@ -694,12 +738,18 @@ function typeset() {
   // module blocks the main thread. Compilation is synchronous inside wasm.
   requestAnimationFrame(() => {
     const started = performance.now();
-    const result = rustyfi.compile(getDoc(), fontBytes, currentLang());
+    const html = currentFormat() === "html";
+    const result = html
+      ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang())
+      : rustyfi.compile(getDoc(), fontBytes, currentLang());
     const ms = Math.round(performance.now() - started);
     if (result.ok) {
-      showPdf(result.pdf);
+      const size = html ? new TextEncoder().encode(result.html).length : result.pdf.length;
+      if (html) showHtml(result.html);
+      else showPdf(result.pdf);
       statusEl.className = "ok";
-      statusEl.textContent = `typeset in ${ms} ms — ${(result.pdf.length / 1024).toFixed(1)} kB`;
+      statusEl.textContent =
+        `typeset in ${ms} ms — ${(size / 1024).toFixed(1)} kB ${html ? "HTML" : "PDF"}`;
     } else {
       statusEl.className = "";
       statusEl.textContent = `failed in ${ms} ms`;

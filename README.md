@@ -2,9 +2,15 @@
 
 [rustyfi](https://github.com/yasuo-ozu/rustyfi) — a native Rust port of the
 SATySFi typesetter — compiled to WebAssembly and running in a browser tab. You
-type a `.saty` document, the module typesets it, and the PDF appears beside it:
-**typesetting never leaves the tab**, and there is no package manager to reach
-for.
+type a `.saty` document, the module typesets it, and the result appears beside
+it: **typesetting never leaves the tab**, and there is no package manager to
+reach for.
+
+The **Output** selector picks what the Typeset button produces — a **PDF**, or
+**HTML**: one continuous, self-contained web document with no pages in it,
+which the browser breaks and justifies at whatever width you give it. Both come
+from the same compile; only the serialization differs, which is why the HTML
+backend adds ~124 kB to the module rather than a second compiler.
 
 The editor is a real one — mistakes are underlined as you type, hovering a name
 says what it is and which package declares it, completion offers that package's

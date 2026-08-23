@@ -389,6 +389,60 @@ pub fn compile_with_font_lang(
     .map_err(|e| e.to_string())
 }
 
+/// Compile a document to a self-contained HTML page.
+///
+/// The same [`build_document`] the PDF path runs — only the serialization
+/// differs, so this adds a writer to the module and not a second compiler.
+///
+/// A font still matters even though the reflowable backend NAMES faces rather
+/// than embedding them: the family name is what tells the page which stack to
+/// ask for, and it is also the only signal that separates a `+code` block from
+/// a wrapped paragraph (a fixed-pitch face means the line breaks are the
+/// author's and survive as `<br>`). Without a store every run falls back to
+/// the document's default serif and code blocks read as prose.
+pub fn compile_html_with_font_lang(
+    source: &str,
+    font: Option<Vec<u8>>,
+    lang: Lang,
+) -> Result<String, String> {
+    let store = font
+        .map(|bytes| {
+            rustyfi_pdf::TtfFontStore::from_bytes(bytes, None, None, "the uploaded font")
+                .map_err(|e| e.to_string())
+        })
+        .transpose()?;
+    let base14 = rustyfi_pdf::Base14Metrics;
+    let metrics: &dyn rustyfi_backend::FontMetrics = match &store {
+        Some(store) => store,
+        None => &base14,
+    };
+
+    let doc = build_document(source, metrics, lang)?;
+
+    match &store {
+        Some(store) => rustyfi_html::render_html_reflow_ttf_with_decos(
+            doc.reflow_source.as_deref(),
+            &doc.geometry,
+            store,
+            &doc.images,
+            &doc.extras,
+            &doc.reflow_links,
+            &doc.reflow_dests,
+            &doc.reflow_frame_decos,
+        ),
+        None => rustyfi_html::render_html_reflow_with_decos(
+            doc.reflow_source.as_deref(),
+            &doc.geometry,
+            &doc.images,
+            &doc.extras,
+            &doc.reflow_links,
+            &doc.reflow_dests,
+            &doc.reflow_frame_decos,
+        ),
+    }
+    .map_err(|e| e.to_string())
+}
+
 /// Everything up to and including layout: load `@require:`s out of the
 /// bundled corpus, then run the generation's own compile entry point.
 ///
@@ -709,6 +763,37 @@ pub unsafe extern "C" fn rustyfi_compile_with_font_lang(
     };
     let result = match std::str::from_utf8(bytes) {
         Ok(source) => compile_with_font_lang(source, font, Lang::from_u32(lang)),
+        Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
+    };
+    Output::from_result(result).into_raw()
+}
+
+/// [`rustyfi_compile_with_font_lang`], but the successful [`Output`] carries
+/// UTF-8 HTML instead of PDF bytes.
+///
+/// # Safety
+/// As [`rustyfi_compile_with_font`].
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_compile_html(
+    src: *const u8,
+    len: usize,
+    font: *const u8,
+    font_len: usize,
+    lang: u32,
+) -> *mut Output {
+    let bytes: &[u8] = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src, len) }
+    };
+    let font: Option<Vec<u8>> = if font.is_null() || font_len == 0 {
+        None
+    } else {
+        Some(unsafe { std::slice::from_raw_parts(font, font_len) }.to_vec())
+    };
+    let result = match std::str::from_utf8(bytes) {
+        Ok(source) => compile_html_with_font_lang(source, font, Lang::from_u32(lang))
+            .map(String::into_bytes),
         Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
     };
     Output::from_result(result).into_raw()

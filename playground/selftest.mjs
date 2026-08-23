@@ -171,6 +171,51 @@ if (again.ok && good.ok) {
   );
 }
 
+// 5b. The HTML render mode. Same compiler, different serialization — so what
+//     is worth pinning is that it produces a real page, that it is
+//     SELF-CONTAINED (the point of the writer: never a script, never a remote
+//     asset), and that it is genuinely reflowable rather than the
+//     page-faithful twin, which positions every run absolutely.
+{
+  const page = rustyfi.compileHtml(HELLO);
+  check("the HTML mode compiles", page.ok, page.ok ? "" : page.error);
+  if (page.ok) {
+    check(
+      "the HTML output is a document",
+      page.html.startsWith("<!doctype html>"),
+      JSON.stringify(page.html.slice(0, 40)),
+    );
+    check(
+      "the HTML output has flowing paragraphs",
+      page.html.includes('<p class="para"'),
+      "no flowing paragraph in the output",
+    );
+    // The invariant the reflowable backend exists for. `position: absolute`
+    // DOES appear once in its stylesheet — a framed block's drawing layer —
+    // so this looks at the body rather than the whole file.
+    const body = page.html.split("<body>")[1] ?? page.html;
+    check(
+      "the HTML content positions nothing",
+      !body.includes("position:absolute") && !body.includes("position: absolute"),
+      "the reflowed content is absolutely positioned",
+    );
+    check(
+      "the HTML output fetches nothing and runs nothing",
+      !page.html.includes("<script") && !/(?:src|href)="https?:/.test(page.html),
+      "the page reaches off-origin",
+    );
+    console.log(`     rendered ${new TextEncoder().encode(page.html).length} bytes of HTML`);
+  }
+  // A broken document must take the error path here too, not trap.
+  const badHtml = rustyfi.compileHtml("@require: stdja-mini\nthis is not a document");
+  check("a broken document fails in HTML mode too", !badHtml.ok, "it compiled!");
+  check(
+    "the HTML-mode error is readable",
+    !badHtml.ok && badHtml.error.trim().length > 0,
+    JSON.stringify(badHtml.error),
+  );
+}
+
 // 6. Base-14 refuses a character it cannot encode, rather than dropping it.
 //    This is the limitation the page states, so it is worth pinning: silent
 //    loss would be far worse than the error.

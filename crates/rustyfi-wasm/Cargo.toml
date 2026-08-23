@@ -34,6 +34,11 @@ rustyfi-backend = { path = "../../rustyfi/crates/rustyfi-backend" }
 # filesystem path.
 rustyfi-lang = { path = "../../rustyfi/crates/rustyfi-lang", default-features = false }
 rustyfi-pdf = { path = "../../rustyfi/crates/rustyfi-pdf" }
+
+# The HTML backend, for the page's "HTML" render mode. It reuses the SAME
+# `build_document` the PDF path does — only the serialization differs — so it
+# adds no compiler code to the module, just the writer.
+rustyfi-html = { path = "../../rustyfi/crates/rustyfi-html" }
 rustyfi-loader = { path = "../../rustyfi/crates/rustyfi-loader" }
 # The editor's fast tier: lex and parse diagnostics, positioned in UTF-16 code
 # units, for both generations. `default-features = false` is not an

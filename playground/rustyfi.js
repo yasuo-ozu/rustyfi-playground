@@ -82,6 +82,40 @@ function wrap(instance) {
       }
     },
 
+      /// Compile SATySFi source to a self-contained HTML page. Same inputs
+      /// and same failure handling as `compile`; returns `{ ok: true, html }`
+      /// or `{ ok: false, error }`.
+      ///
+      /// The font matters here for a reason of its own: the reflowable backend
+      /// NAMES faces rather than embedding them, and the family name is also
+      /// what tells it a run is fixed-pitch — the only signal separating a
+      /// `+code` block from a wrapped paragraph.
+      compileHtml(source, font, lang = 0) {
+        const src = new TextEncoder().encode(source);
+        let srcPtr = 0, srcLen = 0, fontPtr = 0, fontLen = 0;
+        try {
+          [srcPtr, srcLen] = push(src);
+          [fontPtr, fontLen] = push(font);
+          const { ok, bytes } = take(
+            ex.rustyfi_compile_html(srcPtr, srcLen, fontPtr, fontLen, lang),
+          );
+          return ok ? { ok: true, html: text(bytes) } : { ok: false, error: text(bytes) };
+        } catch (e) {
+          trapped = true;
+          return {
+            ok: false,
+            error:
+              `the WebAssembly module trapped: ${e && e.message ? e.message : e}\n\n` +
+              "This usually means the document was too deeply nested for the " +
+              "module's stack. Reload the page to get a fresh module.",
+            trapped: true,
+          };
+        } finally {
+          if (srcPtr !== 0) ex.rustyfi_dealloc(srcPtr, srcLen);
+          if (fontPtr !== 0) ex.rustyfi_dealloc(fontPtr, fontLen);
+        }
+      },
+
     /// Analyse SATySFi source without typesetting it, for live editor
     /// diagnostics. Returns `{ ok: true, diagnostics: [...] }`, where each
     /// entry is
