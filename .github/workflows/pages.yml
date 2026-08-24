@@ -92,6 +92,22 @@ jobs:
           # `editor/build.mjs` and served from this origin. No npm in the
           # deploy path, and no CDN in the page.
           cp -r playground/vendor _site/
+          # Cache-bust every module the page imports.
+          #
+          # Pages sends `cache-control: max-age=600` on everything and caches
+          # each file independently, so a reader can hold a FRESH index.html
+          # beside a TEN-MINUTE-OLD rustyfi.js — a page calling a method the
+          # module it got does not have. Not hypothetical: that is exactly
+          # what `compileMarkdown is not a function` was.
+          #
+          # Stamping the commit onto each specifier makes the fresh page ask
+          # for a URL no cache holds, so the two can no longer disagree. A
+          # stale index.html still asks for its own matching stale modules,
+          # which is consistent and therefore fine.
+          for f in rustyfi.js examples.js share.js packages.js vendor/markdown.js vendor/codemirror.js; do
+            sed -i "s|\(from \"\./\)$f\(\"\)|\1$f?v=$GITHUB_SHA\2|g" _site/index.html
+          done
+          echo "cache-busted $(grep -o "?v=$GITHUB_SHA" _site/index.html | wc -l) module imports"
           cp target/wasm32-unknown-unknown/release/rustyfi_wasm.wasm _site/
           cp rustyfi/lib-rustyfi/dist/fonts/Junicode.ttf _site/fonts/
           cp rustyfi/lib-rustyfi/dist/fonts/LICENSE-Junicode-OFL.txt _site/fonts/

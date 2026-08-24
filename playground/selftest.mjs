@@ -1441,6 +1441,26 @@ StdJa.document (| title = {t}; author = {a} |) '<
     !/id="format"/.test(page) && (page.match(/class="fmt[ "]/g) ?? []).length === 4,
     `${(page.match(/class="fmt[ "]/g) ?? []).length} tabs, dropdown ${/id="format"/.test(page)}`);
   check("the header no longer names a font", !/id="fontlabel"/.test(page));
+
+  // Every module the page imports has to be one the deploy cache-busts.
+  //
+  // `.github/workflows/pages.yml` stamps the commit onto a fixed LIST of
+  // specifiers, because Pages caches index.html and its modules independently
+  // and a fresh page beside a stale module is a `TypeError` naming a method
+  // that plainly exists. An import added here and not added there would go
+  // back to being cacheable on its own, and the failure would reappear months
+  // later looking like a bug in the page.
+  const BUSTED = [
+    "./rustyfi.js", "./examples.js", "./share.js", "./packages.js",
+    "./vendor/markdown.js", "./vendor/codemirror.js",
+  ];
+  const imported = [...page.matchAll(/from "(\.\/[^"]+)"/g)].map((m) => m[1]);
+  const missed = imported.filter((s) => !BUSTED.includes(s));
+  check(
+    "every module the page imports is cache-busted by the deploy",
+    missed.length === 0,
+    `${missed.join(" ")} — add it to the loop in .github/workflows/pages.yml`,
+  );
 }
 
 // 5d. The Markdown render mode. It is a SUBSET of the HTML one — same

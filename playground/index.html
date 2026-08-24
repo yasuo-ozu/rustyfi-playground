@@ -979,41 +979,82 @@ async function typeset() {
 
   // Yield a frame so the button state and status actually paint before the
   // module blocks the main thread. Compilation is synchronous inside wasm.
+  //
+  // The button is re-enabled in `finally`. Before that it was the callback's
+  // last statement, so ANY throw on the way — a renderer, or a method the
+  // module turns out not to have — left the page disabled with "typesetting…"
+  // on it and the real error only in the console. That is a hang, and it gets
+  // reported as one.
   requestAnimationFrame(() => {
-    const started = performance.now();
-    const fmt = currentFormat();
-    // Both Markdown tabs are the SAME compile — one renders its result, the
-    // other shows it — so switching between them costs a typeset but never a
-    // different answer.
-    const markdown = fmt === "markdown" || fmt === "markdown-src";
-    const result =
-      fmt === "html"
-        ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes)
-        : markdown
-          ? rustyfi.compileMarkdown(getDoc(), fontBytes, currentLang(), cjkBytes)
-          : rustyfi.compile(getDoc(), fontBytes, currentLang(), cjkBytes);
-    const ms = Math.round(performance.now() - started);
-    if (result.ok) {
-      const payload = fmt === "html" ? result.html : markdown ? result.markdown : result.pdf;
-      const size = fmt === "pdf" ? payload.length : new TextEncoder().encode(payload).length;
-      if (fmt === "html") showHtml(payload);
-      else if (fmt === "markdown") showMarkdown(payload);
-      else if (fmt === "markdown-src") showMarkdownSource(payload);
-      else showPdf(payload);
-      const LABEL = { pdf: "PDF", html: "HTML", markdown: "Markdown", "markdown-src": "Markdown" };
-      statusEl.className = "ok";
-      statusEl.textContent = `typeset in ${ms} ms — ${(size / 1024).toFixed(1)} kB ${LABEL[fmt]}`;
-    } else {
+    try {
+      renderOnce();
+    } catch (e) {
       statusEl.className = "";
-      statusEl.textContent = `failed in ${ms} ms`;
-      showError(result.error);
-      // A trap kills the instance for good, so the analysis timer has to stop
-      // too — otherwise it would keep failing every 600 ms against a module
-      // that no longer exists.
-      if (result.trapped) moduleTrapped = true;
+      statusEl.textContent = "failed";
+      showError(
+        staleModuleHint(e) ??
+          `the page failed to render the result: ${e && e.stack ? e.stack : e}`,
+      );
+    } finally {
+      compileBtn.disabled = false;
     }
-    compileBtn.disabled = false;
   });
+}
+
+/// One compile, and whatever the selected tab does with it.
+function renderOnce() {
+  const started = performance.now();
+  const fmt = currentFormat();
+  // Both Markdown tabs are the SAME compile — one renders its result, the
+  // other shows it — so switching between them costs a typeset but never a
+  // different answer.
+  const markdown = fmt === "markdown" || fmt === "markdown-src";
+  const result =
+    fmt === "html"
+      ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes)
+      : markdown
+        ? rustyfi.compileMarkdown(getDoc(), fontBytes, currentLang(), cjkBytes)
+        : rustyfi.compile(getDoc(), fontBytes, currentLang(), cjkBytes);
+  const ms = Math.round(performance.now() - started);
+  if (result.ok) {
+    const payload = fmt === "html" ? result.html : markdown ? result.markdown : result.pdf;
+    const size = fmt === "pdf" ? payload.length : new TextEncoder().encode(payload).length;
+    if (fmt === "html") showHtml(payload);
+    else if (fmt === "markdown") showMarkdown(payload);
+    else if (fmt === "markdown-src") showMarkdownSource(payload);
+    else showPdf(payload);
+    const LABEL = { pdf: "PDF", html: "HTML", markdown: "Markdown", "markdown-src": "Markdown" };
+    statusEl.className = "ok";
+    statusEl.textContent = `typeset in ${ms} ms — ${(size / 1024).toFixed(1)} kB ${LABEL[fmt]}`;
+  } else {
+    statusEl.className = "";
+    statusEl.textContent = `failed in ${ms} ms`;
+    showError(result.error);
+    // A trap kills the instance for good, so the analysis timer has to stop
+    // too — otherwise it would keep failing every 600 ms against a module
+    // that no longer exists.
+    if (result.trapped) moduleTrapped = true;
+  }
+}
+
+/// Recognise the one failure here that is NOT a bug in this page: a browser
+/// holding a cached `rustyfi.js` from before a deploy while serving a fresh
+/// `index.html` that calls something the old one does not have.
+///
+/// GitHub Pages sends `cache-control: max-age=600` on every asset and caches
+/// them independently, so the page and the module beside it can be minutes
+/// apart. The symptom is a `TypeError` naming a method that plainly exists in
+/// the source — which reads as a bug in the page, and is not one.
+function staleModuleHint(e) {
+  const msg = e && e.message ? e.message : String(e);
+  if (!/rustyfi\.\w+ is not a function/.test(msg)) return null;
+  return (
+    `${msg}\n\n` +
+    "Your browser is running a CACHED copy of this page's code from before the " +
+    "last deploy: the page itself is new, the module beside it is not.\n\n" +
+    "Reload past the cache — Ctrl-Shift-R, or Cmd-Shift-R on a Mac — and this " +
+    "goes away. It also expires on its own within ten minutes."
+  );
 }
 
 // ---------------------------------------------------------------------------
