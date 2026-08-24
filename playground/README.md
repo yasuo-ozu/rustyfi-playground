@@ -215,6 +215,15 @@ that did not get resolved.
   so the browser actually checks it, and nothing is requested in any other
   math mode — so the page still works offline unless you ask for KaTeX.
 
+  The **MathML** mode is the one that asks for nothing at all: the browser
+  lays MathML Core out itself, so an equation becomes real structure in the
+  document's own tree — a screen reader reads it as mathematics, the browser's
+  find searches inside it, and no script runs. It is the same re-derivation
+  from the laid-out glyphs that `--katex` is and carries the same losses, so
+  an equation whose drawing the recovery cannot fully account for is marked
+  rather than quietly approximated. The support floor is a browser from 2023:
+  Firefox has always had it and Safari since 2013, Chromium only since 109.
+
 - **362,651 bytes, 115 kB gzipped**, against a WebAssembly module of 7.6 MB /
   2.0 MB gzipped: about 5% more to download.
 - Assembled from six `@codemirror/*` packages and their dependencies —

@@ -407,7 +407,7 @@
             title="The Markdown, rendered — what a reader of the file would see.">Markdown</button>
         </span>
         <label class="mathpick" id="mathpick"
-          title="How equations are written. Each is right for a different reader; the default follows the format.">
+          title="How equations are written. Each is right for a different reader; the default follows the format. MathML is the only one the browser lays out itself — real structure a screen reader can read and the browser's find can search, with nothing fetched.">
           Math
           <select id="mathmode">
             <option value="0" selected>Default</option>
@@ -415,6 +415,7 @@
             <option value="2">SVG text</option>
             <option value="3" data-md-only="1">Unicode</option>
             <option value="4">KaTeX</option>
+            <option value="5">MathML</option>
           </select>
         </label>
         <span class="mdtheme" id="mdtheme" role="group" aria-label="Markdown preview">
@@ -477,7 +478,8 @@ let format = "pdf";
 let mdSource = false;
 
 /// How equations are written, as the small integer the module takes: 0 the
-/// format's own default, 1 outlined SVG, 2 SVG text, 3 Unicode, 4 KaTeX.
+/// format's own default, 1 outlined SVG, 2 SVG text, 3 Unicode, 4 KaTeX,
+/// 5 MathML Core.
 /// Unlike the theme, this changes the OUTPUT, so switching it does re-run the
 /// typesetter.
 let mathMode = 0;

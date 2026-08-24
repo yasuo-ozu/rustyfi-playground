@@ -404,6 +404,13 @@ fn math_mode(mode: u32, html: bool) -> rustyfi_html::MathMode {
         2 => M::SvgText,
         3 => M::Unicode,
         4 => M::Katex,
+        // MathML Core, laid out by the browser itself. The only mode whose
+        // output is neither a picture nor a foreign language: the equation
+        // becomes real structure in the document's own tree, so a screen
+        // reader reads it as mathematics and the browser's find works inside
+        // it — and, unlike `Katex`, nothing has to be fetched for it to
+        // render, which matters more here than anywhere else.
+        5 => M::MathMl,
         // 0, and anything unrecognised: the format's own default. An unknown
         // value is a caller a version out of step, and the default is a better
         // answer for it than an error the page cannot act on.

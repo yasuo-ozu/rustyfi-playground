@@ -1549,26 +1549,45 @@ StdJa.document (| title = {t}; author = {a} |) '<
         new URL("../rustyfi/lib-rustyfi/dist/fonts/latinmodern-math.otf", import.meta.url),
       ).catch(() => null),
     );
-    const NAMES = { 1: "outline", 2: "svg-text", 3: "unicode", 4: "katex" };
+    const NAMES = { 1: "outline", 2: "svg-text", 3: "unicode", 4: "katex", 5: "mathml" };
     const md = new Map(), htm = new Map();
-    for (const m of [0, 1, 2, 3, 4]) {
+    for (const m of [0, 1, 2, 3, 4, 5]) {
       const r = rustyfi.compileMarkdown(EQ, fontBytes, 0, null, mathFace, m);
       if (r.ok) md.set(m, r.markdown);
       const h = rustyfi.compileHtml(EQ, fontBytes, 0, null, mathFace, m);
       if (h.ok) htm.set(m, h.html);
     }
-    check("every math mode compiles in markdown", md.size === 5, `${md.size}/5`);
-    check("every math mode compiles in html", htm.size === 5, `${htm.size}/5`);
+    check("every math mode compiles in markdown", md.size === 6, `${md.size}/6`);
+    check("every math mode compiles in html", htm.size === 6, `${htm.size}/6`);
     // Markdown's default is SVG text; HTML's is outline. Those two pairings
     // must match, and the others must not — that is the whole contract.
     check("markdown's default is the SVG-text mode", md.get(0) === md.get(2));
     check("html's default is the outline mode", htm.get(0) === htm.get(1));
     check("markdown's outline mode differs from its default", md.get(0) !== md.get(1));
     check("html's svg-text mode differs from its default", htm.get(0) !== htm.get(2));
-    for (const m of [3, 4]) {
+    for (const m of [3, 4, 5]) {
       check(`markdown's ${NAMES[m]} mode differs from its default`, md.get(0) !== md.get(m));
     }
     check("html's katex mode differs from its default", htm.get(0) !== htm.get(4));
+    check("html's mathml mode differs from its default", htm.get(0) !== htm.get(5));
+
+    // MathML is the one mode whose output is neither a drawing nor someone
+    // else's notation, so "differs from the default" is too weak a claim for
+    // it: a mode that emitted one `<mtext>` per equation would satisfy that
+    // and lose everything the mode exists for. Check the STRUCTURE, in both
+    // formats — the fixture has a superscript and a fraction, so `<msup>` and
+    // `<mfrac>` are exactly what a real recovery produces.
+    for (const [fmt, out] of [["html", htm.get(5)], ["markdown", md.get(5)]]) {
+      check(`${fmt}'s mathml mode writes a <math> element`,
+        out.includes("<math ") && out.includes("</math>"),
+        "no MathML reached the output");
+      for (const el of ["<mfrac>", "<msup>"]) {
+        check(`${fmt}'s mathml mode writes ${el}`, out.includes(el),
+          "the equation arrived unrecovered, which is what this mode exists to avoid");
+      }
+      check(`${fmt}'s mathml mode draws no equation SVG`, !out.includes("<svg class=\"math"),
+        "an equation was still drawn rather than written as MathML");
+    }
   }
 
   check("the Markdown preview has a theme toggle", /class="mdt"/.test(page));

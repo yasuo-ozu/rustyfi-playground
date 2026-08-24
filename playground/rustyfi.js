@@ -96,7 +96,9 @@ function wrap(instance) {
     /// that is the whole difference between a fenced code block and a
     /// paragraph of prose.
     /// `mathMode` selects how equations are written: 0 the format's own
-    /// default, 1 outlined SVG, 2 SVG text, 3 Unicode characters, 4 KaTeX.
+    /// default, 1 outlined SVG, 2 SVG text, 3 Unicode characters, 4 KaTeX,
+    /// 5 MathML Core — the one the browser lays out itself, with nothing
+    /// fetched and no script run.
     /// Zero rather than a name because the boundary is C; `MathMode` has no
     /// `Default` in the library precisely because the right answer differs per
     /// format, so 0 means "let the format decide", not "the first variant".
