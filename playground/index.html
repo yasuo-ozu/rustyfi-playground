@@ -274,10 +274,7 @@
   /* `Source` is a toggle, not one of a set, so it is separated from the three
      mutually-exclusive theme buttons. */
   .mdt.src { margin-left: 0.45rem; }
-  /* The theme only applies to the RENDERING. With the source showing, the
-     three buttons still hold the choice you will get back, so they are dimmed
-     rather than hidden — removing them would make the row jump. */
-  .mdtheme.showing-source .mdt[data-theme] { opacity: 0.35; }
+
   /* The Markdown source: on this page, not in the frame, because it is what
      you would copy. Wraps rather than scrolls horizontally — a drawing's
      `<svg>` is one very long line, and a horizontal scrollbar for it would
@@ -1046,28 +1043,35 @@ function offerDownload(data, name, type) {
   $("dl").append("— ", a);
 }
 
+/// The single owner of the Source state, so the button, the theme buttons and
+/// the pressed styling cannot disagree about it.
+function setSource(on) {
+  if (mdSource === on) return;
+  mdSource = on;
+  $("mdsrc").classList.toggle("sel", on);
+  $("mdsrc").setAttribute("aria-pressed", String(on));
+}
+
 $("mdsrc").addEventListener("click", () => {
-  mdSource = !mdSource;
-  $("mdsrc").classList.toggle("sel", mdSource);
-  $("mdsrc").setAttribute("aria-pressed", String(mdSource));
-  // The light/dark buttons only mean anything for the RENDERING.
-  $("mdtheme").classList.toggle("showing-source", mdSource);
+  setSource(!mdSource);
   if (lastMarkdown !== null && format === "markdown") showMarkdownAs(lastMarkdown);
 });
 
 document.querySelectorAll(".mdt[data-theme]").forEach((b) => {
   b.addEventListener("click", () => {
-    if (b.dataset.theme === mdTheme) return;
+    if (b.dataset.theme === mdTheme && !mdSource) return;
     mdTheme = b.dataset.theme;
     document.querySelectorAll(".mdt[data-theme]").forEach((x) =>
       x.classList.toggle("sel", x === b),
     );
+    // A theme is a property of the RENDERING, so asking for one means "show me
+    // the rendering, like this". Leaving the source up while the reader picks
+    // a colour would make the click look ignored.
+    setSource(false);
     // Re-render what is already there. No compile: the Markdown does not
     // depend on the colour scheme, and re-running the typesetter to recolour a
     // preview would be a visible stall on a large document.
-    if (lastMarkdown !== null && format === "markdown" && !mdSource) {
-      showMarkdown(lastMarkdown);
-    }
+    if (lastMarkdown !== null && format === "markdown") showMarkdown(lastMarkdown);
   });
 });
 

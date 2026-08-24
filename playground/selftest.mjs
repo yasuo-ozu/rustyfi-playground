@@ -1448,9 +1448,14 @@ StdJa.document (| title = {t}; author = {a} |) '<
   check("Markdown source is a toggle beside the theme buttons, not a tab",
     /id="mdsrc"/.test(page) && !/data-fmt="markdown-src"/.test(page),
     "the Markdown Source tab is still a format");
-  check("the theme buttons dim while the source is showing",
-    /\.mdtheme\.showing-source/.test(page),
-    "nothing tells the reader the light/dark choice does not apply to source");
+  // Choosing a theme means "show me the rendering, like this", so it releases
+  // the Source toggle rather than being silently ignored.
+  check("choosing a theme releases the source toggle",
+    /setSource\(false\)/.test(page),
+    "picking light/dark while the source is up would look like a dead click");
+  check("the source state has a single owner",
+    /function setSource\(on\)/.test(page),
+    "the button, the theme buttons and the pressed styling could disagree");
   check("the header no longer names a font", !/id="fontlabel"/.test(page));
 
   // The Markdown preview's light/dark toggle. The frame is standing in for
