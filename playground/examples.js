@@ -128,6 +128,49 @@ document (|
 `,
   },
   {
+    name: "Equation gallery",
+    needsFont: true,
+    source: `% Big operators are the part worth looking at. A display-size sum or
+% integral is a DIFFERENT GLYPH from the one its character maps to --
+% the font's MATH table supplies it as a variant, addressable only by
+% glyph id. An SVG <text> can name a character but not a glyph id, so
+% the HTML backend draws these from the font outline as a <path>.
+% Before that, they came out base-size with their limits hanging off
+% to one side, because the layout had been computed for the big glyph.
+
+@require: stdja-mini
+@require: math
+
+document (| title = {Equations}; author = {rustyfi}; |) '<
+  +p {
+    Every equation here is set by the same compiler that produces the PDF, then
+    serialized as HTML. A glyph is text where a character names it, and an SVG
+    path drawn from the font outline where the MATH table supplies a display
+    variant that no character names — which is what makes the operators below
+    the right size with their limits centred.
+  }
+
+  +p { Big operators carry their limits: }
+  +math(\${ \\sum_{k=1}^{n} k^2 = \\frac{n \\paren{n + 1} \\paren{2n + 1}}{6} });
+  +math(\${ \\int_{0}^{\\infty} e^{-x^2} \\ordd x = \\frac{\\sqrt{\\pi}}{2} });
+  +math(\${ \\prod_{k=1}^{n} \\frac{k}{k + 1} = \\frac{1}{n + 1} });
+
+  +p { Fractions nest, radicals grow, and fences stretch to their contents: }
+  +math(\${ x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a} });
+  +math(\${ \\frac{1}{1 + \\frac{1}{1 + \\frac{1}{1 + \\frac{1}{2}}}} = \\frac{8}{13} });
+  +math(\${ \\sqrt{\\sqrt{\\sqrt{x}}} = x^{1/8} });
+  +math(\${ \\abs{\\frac{a}{b}} \\leq \\norm{\\frac{a}{b}} \\leq \\ceil{\\frac{a}{b}} });
+  +math(\${ \\lim_{n \\to \\infty} \\paren{1 + \\frac{1}{n}}^n = e });
+
+  +p {
+    The bundled Junicode covers no Greek and no set-theory symbols, so this
+    example stays inside what it can draw. Supply a fuller face with the font
+    picker and Greek, quantifiers and set operators follow.
+  }
+>
+`,
+  },
+  {
     name: "Aligned equations",
     needsFont: true,
     source: `@require: stdja-mini
