@@ -498,6 +498,49 @@ pub fn compile_html_with_font_lang(
     compile_html_with_fonts_lang(source, font, None, lang)
 }
 
+/// Markdown: the same recovered structure the reflowable HTML backend walks,
+/// written as GitHub-flavoured Markdown.
+///
+/// Takes the same two faces for the same reason as
+/// [`compile_html_with_fonts_lang`], and the store matters MORE here than the
+/// name does: Markdown names no fonts at all, but the backend reads the
+/// FAMILY name off the store to decide which runs are fixed-pitch, and a
+/// fenced code block is the difference between a listing and a paragraph.
+pub fn compile_markdown_with_fonts_lang(
+    source: &str,
+    font: Option<Vec<u8>>,
+    cjk: Option<Vec<u8>>,
+    lang: Lang,
+) -> Result<String, String> {
+    let store = font_store(font, cjk)?;
+    let base14 = rustyfi_pdf::Base14Metrics;
+    let metrics: &dyn rustyfi_backend::FontMetrics = match &store {
+        Some(store) => store,
+        None => &base14,
+    };
+
+    let doc = build_document(source, metrics, lang)?;
+
+    match &store {
+        Some(store) => rustyfi_html::render_markdown_ttf_with(
+            doc.reflow_source.as_deref(),
+            store,
+            &doc.images,
+            &doc.extras,
+            &doc.reflow_links,
+            &doc.reflow_dests,
+        ),
+        None => rustyfi_html::render_markdown(
+            doc.reflow_source.as_deref(),
+            &doc.images,
+            &doc.extras,
+            &doc.reflow_links,
+            &doc.reflow_dests,
+        ),
+    }
+    .map_err(|e| e.to_string())
+}
+
 /// [`compile_html_with_font_lang`], additionally taking a CJK face.
 ///
 /// The reflowable backend NAMES faces rather than embedding them, so what a
@@ -977,6 +1020,36 @@ pub unsafe extern "C" fn rustyfi_compile_html_fonts(
     let cjk = unsafe { borrowed_font(cjk, cjk_len) };
     let result = match std::str::from_utf8(bytes) {
         Ok(source) => compile_html_with_fonts_lang(source, font, cjk, Lang::from_u32(lang))
+            .map(String::into_bytes),
+        Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
+    };
+    Output::from_result(result).into_raw()
+}
+
+/// [`rustyfi_compile_html_fonts`]'s Markdown counterpart. Same arguments,
+/// same ownership rules; the successful payload is UTF-8 Markdown.
+///
+/// # Safety
+/// As [`rustyfi_compile_with_font`], for all three buffers.
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_compile_markdown_fonts(
+    src: *const u8,
+    len: usize,
+    font: *const u8,
+    font_len: usize,
+    cjk: *const u8,
+    cjk_len: usize,
+    lang: u32,
+) -> *mut Output {
+    let bytes: &[u8] = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src, len) }
+    };
+    let font = unsafe { borrowed_font(font, font_len) };
+    let cjk = unsafe { borrowed_font(cjk, cjk_len) };
+    let result = match std::str::from_utf8(bytes) {
+        Ok(source) => compile_markdown_with_fonts_lang(source, font, cjk, Lang::from_u32(lang))
             .map(String::into_bytes),
         Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
     };

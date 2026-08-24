@@ -98,7 +98,7 @@ document (|
   }
   +p {
     Most math symbols live outside WinAnsi, so anything past ASCII needs a
-    real font. This page loads one for you, named in the header above. Without
+    real font. This page loads one for you, bundled beside the module. Without
     it the base-14 fallback refuses a character it cannot encode rather than
     dropping it, which is why several of the examples below say they need a
     font.
@@ -495,7 +495,7 @@ document (|
 % floating figure that is registered on one page and printed on another.
 %
 % The stdja family renders that furniture with characters outside WinAnsi, so
-% this example needs a real font -- the one named in the header, which the
+% this example needs a real font -- the bundled one, which the
 % page loads before the first typeset. Under the base-14 fallback alone it
 % fails with an honest encoding error rather than dropping the characters.
 %

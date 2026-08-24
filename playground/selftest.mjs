@@ -1407,6 +1407,23 @@ StdJa.document (| title = {t}; author = {a} |) '<
       check(`${pkg} is named in the licence notice`, notice.includes(pkg));
     }
   }
+  // The Markdown renderer is vendored on exactly the same terms as the
+  // editor: committed, self-contained, and its licence beside it.
+  const mdBundle = await read("vendor/markdown.js").catch(() => null);
+  check("the Markdown renderer is committed", mdBundle !== null && mdBundle.length > 10_000,
+    mdBundle === null ? "playground/vendor/markdown.js is missing" : `${mdBundle.length} bytes`);
+  if (mdBundle !== null) {
+    console.log(`     markdown bundle: ${mdBundle.length} bytes`);
+    check("the Markdown bundle imports nothing at runtime",
+      !/\bfrom\s*["'][^."'][^"']*["']/.test(mdBundle) && !/\bimport\s*\(/.test(mdBundle),
+      "an unresolved import survived bundling");
+  }
+  const mdNotice = await read("licenses/LICENSE-markdown-MIT.txt").catch(() => null);
+  check("the Markdown renderer's licence travels with it",
+    mdNotice !== null && /MIT/.test(mdNotice ?? ""),
+    "playground/licenses/LICENSE-markdown-MIT.txt is missing");
+  check("marked is named in its licence notice", (mdNotice ?? "").includes("marked"));
+
   const page = await read("index.html");
   // Every URL the page loads has to be relative. The two absolute ones it
   // carries are LINKS a reader may click, not resources it fetches.
@@ -1416,6 +1433,67 @@ StdJa.document (| title = {t}; author = {a} |) '<
     .filter((u) => !/github\.com|opensource\.org/.test(u));
   check("the page fetches nothing from another origin", fetched.length === 0, fetched.join(" "));
   check("the page loads the vendored editor", /from "\.\/vendor\/codemirror\.js"/.test(page));
+  check("the page loads the vendored Markdown renderer",
+    /from "\.\/vendor\/markdown\.js"/.test(page));
+  // The format dropdown is gone; the four tabs replace it. A stale `#format`
+  // would mean `currentFormat()` reads a control nothing updates.
+  check("the output format is chosen by tabs, not a dropdown",
+    !/id="format"/.test(page) && (page.match(/class="fmt[ "]/g) ?? []).length === 4,
+    `${(page.match(/class="fmt[ "]/g) ?? []).length} tabs, dropdown ${/id="format"/.test(page)}`);
+  check("the header no longer names a font", !/id="fontlabel"/.test(page));
+}
+
+// 5d. The Markdown render mode. It is a SUBSET of the HTML one — same
+//     recovered structure, written as GitHub-flavoured Markdown — so what is
+//     worth pinning is that it is Markdown rather than a page, that the
+//     structure survived, and that the two Markdown TABS agree, since they
+//     are one compile shown two ways.
+{
+  const md = rustyfi.compileMarkdown(HELLO, fontBytes);
+  check("the Markdown mode compiles", md.ok, md.ok ? "" : md.error);
+  if (md.ok) {
+    check(
+      "the Markdown output is text, not a page",
+      !md.markdown.startsWith("<!doctype"),
+      JSON.stringify(md.markdown.slice(0, 40)),
+    );
+    check(
+      "the Markdown output is not empty",
+      md.markdown.trim().length > 0,
+      "nothing was written",
+    );
+    // The one thing a Markdown reader will not do for us: a `<script>` in the
+    // output would run when the page frames the rendering.
+    check(
+      "the Markdown output runs nothing",
+      !/<script/i.test(md.markdown),
+      "the Markdown carries a script",
+    );
+    console.log(
+      `     rendered ${new TextEncoder().encode(md.markdown).length} bytes of Markdown`,
+    );
+  }
+  // Structure, on a document that HAS some — HELLO is one paragraph.
+  // No CJK face here on purpose: `cjkBytes` is loaded inside the Japanese
+  // block and is not in scope, and the check is about STRUCTURE — a heading is
+  // a heading whether or not its characters resolve.
+  const structured = EXAMPLES.find((e) => /full document class/i.test(e.name));
+  const rich = rustyfi.compileMarkdown(structured?.source ?? HELLO, fontBytes, structured?.lang ?? 0);
+  if (rich.ok) {
+    check(
+      "a structured document yields Markdown headings",
+      /(?:^|\n)#{1,6} \S/.test(rich.markdown),
+      "no ATX heading in the output",
+    );
+  }
+  // A broken document must take the error path here too, not trap.
+  const badMd = rustyfi.compileMarkdown("@require: stdja-mini\nthis is not a document");
+  check("a broken document fails in Markdown mode too", !badMd.ok, "it compiled!");
+  check(
+    "the Markdown-mode error is readable",
+    !badMd.ok && badMd.error.trim().length > 0,
+    JSON.stringify(badMd.error),
+  );
 }
 
 // A link a browser cannot decode must SAY so rather than load garbage.

@@ -246,6 +246,31 @@
   }
   #status { font-size: 0.85rem; color: var(--muted); margin-left: auto; }
   #status.ok { color: var(--ok); }
+  /* The output-format tabs, in the pane heading — so what you are looking at
+     is named by the control that chose it, rather than by a word in a header
+     bar three panes away. */
+  .fmts { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
+  .fmt {
+    font: inherit; font-size: 0.72rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 0.16rem 0.55rem; border: 1px solid var(--line);
+    border-radius: 99px; background: transparent; color: var(--muted);
+    cursor: pointer; white-space: nowrap;
+  }
+  .fmt:hover { color: var(--ink); }
+  .fmt.sel { background: var(--ink); border-color: var(--ink); color: var(--panel); }
+  /* The Markdown source: on this page, not in the frame, because it is what
+     you would copy. Wraps rather than scrolls horizontally — a drawing's
+     `<svg>` is one very long line, and a horizontal scrollbar for it would
+     hide every ordinary line behind a gesture. */
+  pre#source {
+    flex: 1; min-height: 240px; overflow: auto; display: none;
+    margin: 0; padding: 0.85rem 1rem;
+    white-space: pre-wrap; word-break: break-word;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 9px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  }
   pre#error {
     flex: 1; min-height: 240px; overflow: auto;
     display: none; white-space: pre-wrap; word-break: break-word;
@@ -281,21 +306,11 @@
   <label for="example">Example</label>
   <select id="example"></select>
 
-  <span class="ctl" id="fontlabel" title="The face this page typesets in. Bundled and served beside the module; nothing is uploaded.">Loading font…</span>
-
   <label class="ctl" title="Which SATySFi generation to compile as. Each has its own package corpus.">
     Lang
     <select id="lang">
       <option value="0" selected>0.0.6</option>
       <option value="1">0.1</option>
-    </select>
-  </label>
-
-  <label class="ctl" title="PDF is the page-faithful output. HTML is one continuous, self-contained web document — no pages, and the browser does the line breaking.">
-    Output
-    <select id="format">
-      <option value="pdf" selected>PDF</option>
-      <option value="html">HTML</option>
     </select>
   </label>
 
@@ -357,9 +372,22 @@
       </p>
     </section>
     <section class="pane">
-      <h2><span id="panelabel">PDF</span> <span id="dl"></span></h2>
+      <h2>
+        <span class="fmts" role="tablist" aria-label="Output format">
+          <button class="fmt sel" data-fmt="pdf" role="tab" aria-selected="true"
+            title="The page-faithful output: real pages, the port's own line breaking.">PDF</button>
+          <button class="fmt" data-fmt="html" role="tab" aria-selected="false"
+            title="One continuous, self-contained web document — no pages, and the browser does the line breaking.">HTML</button>
+          <button class="fmt" data-fmt="markdown" role="tab" aria-selected="false"
+            title="The Markdown, rendered — what a reader of the file would see.">Markdown</button>
+          <button class="fmt" data-fmt="markdown-src" role="tab" aria-selected="false"
+            title="The Markdown itself, as the file would be written.">Markdown Source</button>
+        </span>
+        <span id="dl"></span>
+      </h2>
       <div class="empty" id="placeholder">Nothing typeset yet.</div>
       <iframe id="preview" title="Typeset PDF" style="display:none"></iframe>
+      <pre id="source" style="display:none"></pre>
       <pre id="error"></pre>
     </section>
   </div>
@@ -372,6 +400,7 @@ import { instantiateFromUrl } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
 import { decodeSource, encodeSource, shareUrl, shareLang, shorten, SHORTENER_MAX_URL } from "./share.js";
 import { groupPackages, FONTS } from "./packages.js";
+import { markdownToHtml } from "./vendor/markdown.js";
 // CodeMirror 6, VENDORED: `playground/vendor/codemirror.js` is committed to
 // this repository and served from this origin, because the page fetches
 // nothing at runtime — no CDN, no external stylesheet, no remote font. It is
@@ -392,10 +421,14 @@ const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
 const errorEl = $("error");
 const previewEl = $("preview");
-const formatEl = $("format");
+/// The selected output tab. Not a `<select>`'s value any more — the four
+/// formats sit above the preview, where what you are looking at is named by
+/// the control that chose it.
+let format = "pdf";
 /// `"pdf"` or `"html"` — which serialization the Typeset button produces.
-const currentFormat = () => formatEl.value;
+const currentFormat = () => format;
 const placeholderEl = $("placeholder");
+const sourceEl = $("source");
 const compileBtn = $("compile");
 const shareBtn = $("share");
 const langEl = $("lang");
@@ -684,11 +717,15 @@ async function loadBundledFont() {
     const res = await fetch("./fonts/Junicode.ttf");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     fontBytes = new Uint8Array(await res.arrayBuffer());
-    $("fontlabel").textContent =
-      `Font: Junicode (bundled, ${(fontBytes.length / 1024 / 1024).toFixed(1)} MB)`;
   } catch (e) {
-    $("fontlabel").textContent =
-      "No bundled font — base-14 only, so most examples will not render";
+    // Not fatal and not announced in the header any more: the failure that
+    // matters is the one the reader is about to hit, and it arrives as a real
+    // encoding error on the next Typeset rather than as a banner they have to
+    // connect to it themselves.
+    showToast(
+      "Could not load the bundled font — base-14 only, so most examples will " +
+      "report an encoding error instead of rendering.",
+    );
   }
 }
 
@@ -756,9 +793,6 @@ function loadCjkFont() {
       const res = await fetch("./fonts/ipaexg.ttf");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       cjkBytes = new Uint8Array(await res.arrayBuffer());
-      const mb = ((fontBytes?.length ?? 0) + cjkBytes.length) / 1024 / 1024;
-      $("fontlabel").textContent =
-        `Font: Junicode + IPAexGothic (bundled, ${mb.toFixed(1)} MB)`;
       return true;
     } catch (e) {
       cjkFailed = true;
@@ -790,6 +824,9 @@ function showPane(which) {
   // One iframe serves both outputs: a PDF blob the browser's viewer renders,
   // or the HTML document itself.
   previewEl.style.display = which === "pdf" || which === "html" ? "block" : "none";
+  // The Markdown SOURCE is text on this page rather than a document in the
+  // frame: it is what you would copy, so it has to be selectable here.
+  sourceEl.style.display = which === "source" ? "block" : "none";
   errorEl.style.display = which === "error" ? "block" : "none";
 }
 
@@ -799,21 +836,13 @@ function showError(message) {
 }
 
 function showPdf(bytes) {
-  $("panelabel").textContent = "PDF";
   if (blobUrl) URL.revokeObjectURL(blobUrl);
   blobUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
   previewEl.src = blobUrl;
   showPane("pdf");
   // Some browsers (notably on mobile) will not render a PDF in an iframe at
   // all, so always offer the file itself.
-  $("dl").innerHTML = "";
-  const a = document.createElement("a");
-  a.href = blobUrl;
-  a.download = "document.pdf";
-  a.textContent = "download";
-  a.style.fontWeight = "400";
-  a.style.textTransform = "none";
-  $("dl").append("— ", a);
+  offerDownload(bytes, "document.pdf", "application/pdf");
 }
 
 /// The HTML output, shown in the same iframe.
@@ -824,26 +853,115 @@ function showPdf(bytes) {
 /// invariant its own test suite pins — so the frame needs no sandbox to make
 /// it so.
 function showHtml(html) {
-  $("panelabel").textContent = "HTML";
   if (blobUrl) URL.revokeObjectURL(blobUrl);
   blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
   previewEl.src = blobUrl;
   previewEl.title = "Typeset HTML";
   showPane("html");
+  offerDownload(html, "document.html", "text/html;charset=utf-8");
+}
+
+/// The stylesheet the rendered-Markdown frame carries.
+///
+/// Deliberately NOT the playground's own: the frame is standing in for a
+/// Markdown reader, and dressing it in this page's chrome would make the
+/// output look better here than it will anywhere else. It follows the
+/// reader's light/dark preference because the surrounding page does.
+const MARKDOWN_CSS = `
+:root { color-scheme: light dark; --fg:#1a1a1a; --bg:#fff; --mut:#666; --bd:#d8d8d8; --sub:#f6f8fa; }
+@media (prefers-color-scheme: dark) {
+  :root { --fg:#e6e6e6; --bg:#161616; --mut:#9a9a9a; --bd:#3a3a3a; --sub:#1f2430; }
+}
+body {
+  margin: 0; padding: 1.6rem 1.4rem 4rem; max-width: 46rem;
+  background: var(--bg); color: var(--fg); line-height: 1.75;
+  font-family: -apple-system, "Segoe UI", "Noto Sans CJK JP", "Hiragino Sans", sans-serif;
+}
+h1 { font-size: 1.5rem; margin: 2rem 0 .7rem; padding-bottom: .25rem; border-bottom: 1px solid var(--bd); }
+h2 { font-size: 1.2rem; margin: 1.7rem 0 .6rem; }
+h3 { font-size: 1.03rem; margin: 1.3rem 0 .5rem; }
+p { margin: 0 0 .9rem; }
+code { background: var(--sub); padding: .12em .35em; border-radius: 4px;
+       font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .87em; }
+pre { background: var(--sub); border: 1px solid var(--bd); border-radius: 7px;
+      padding: .85rem 1rem; overflow-x: auto; }
+pre code { background: none; padding: 0; font-size: .83em; line-height: 1.5; }
+table { border-collapse: collapse; margin: 1.1rem 0; font-size: .9em; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--bd); padding: .35rem .7rem; text-align: left; }
+th { background: var(--sub); font-weight: 650; }
+blockquote { margin: 1rem 0; padding: .1rem 1rem; border-left: 3px solid var(--bd); color: var(--mut); }
+ul, ol { margin: 0 0 .9rem; padding-left: 1.6rem; }
+li { margin: .15rem 0; }
+hr { border: none; border-top: 1px solid var(--bd); margin: 1.8rem 0; }
+a { color: #1a5fb4; }
+@media (prefers-color-scheme: dark) { a { color: #7aa8e8; } }
+/* A drawing arrives as an inline <svg> and must not overflow the column. */
+img, svg { max-width: 100%; height: auto; }
+`;
+
+/// The Markdown, RENDERED — what a reader of the file would see.
+///
+/// Shown in the same iframe as the other two, inside a minimal page of our
+/// own: `marked` returns a fragment, and a fragment needs a document and a
+/// stylesheet before it looks like anything. Framed rather than inlined so it
+/// cannot inherit — or fight — the playground's own CSS.
+///
+/// `marked` is given the compiler's output, not a reader's input: the raw
+/// `<svg>` a drawing becomes has to survive, and sanitising it away would
+/// silently drop every figure.
+function showMarkdown(md) {
+  const page =
+    "<!doctype html><meta charset=utf-8>" +
+    "<meta name=viewport content='width=device-width, initial-scale=1'>" +
+    "<style>" + MARKDOWN_CSS + "</style>" +
+    // No closing tag: it is optional in HTML, and a literal "</body>" inside a
+    // <script> is a footgun for anything that string-processes this page.
+    "<body>" + markdownToHtml(md);
+  if (blobUrl) URL.revokeObjectURL(blobUrl);
+  blobUrl = URL.createObjectURL(new Blob([page], { type: "text/html;charset=utf-8" }));
+  previewEl.src = blobUrl;
+  previewEl.title = "Rendered Markdown";
+  showPane("html");
+  offerDownload(md, "document.md", "text/markdown;charset=utf-8");
+}
+
+/// The Markdown ITSELF. Text on this page, not a document in the frame — it is
+/// what you would copy.
+function showMarkdownSource(md) {
+  sourceEl.textContent = md;
+  showPane("source");
+  offerDownload(md, "document.md", "text/markdown;charset=utf-8");
+}
+
+/// The "— download" affordance the three renderers share. For the PDF it is
+/// the only way to read the output in a browser that will not frame one; for
+/// the text formats it is how you get the file itself rather than a rendering
+/// of it.
+function offerDownload(data, name, type) {
+  const url = URL.createObjectURL(new Blob([data], { type }));
   $("dl").innerHTML = "";
   const a = document.createElement("a");
-  a.href = blobUrl;
-  a.download = "document.html";
+  a.href = url;
+  a.download = name;
   a.textContent = "download";
   a.style.fontWeight = "400";
   a.style.textTransform = "none";
   $("dl").append("— ", a);
 }
 
-formatEl.addEventListener("change", () => {
-  // Only re-render if the pane is already showing a result; switching format
-  // before the first Typeset should not start a compile on its own.
-  if (previewEl.style.display !== "none") typeset();
+document.querySelectorAll(".fmt").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (b.dataset.fmt === format) return;
+    format = b.dataset.fmt;
+    document.querySelectorAll(".fmt").forEach((x) => {
+      const on = x === b;
+      x.classList.toggle("sel", on);
+      x.setAttribute("aria-selected", String(on));
+    });
+    // Only re-render if the pane is already showing a result; switching tab
+    // before the first Typeset should not start a compile on its own.
+    if (previewEl.style.display !== "none" || sourceEl.style.display !== "none") typeset();
+  });
 });
 
 async function typeset() {
@@ -863,18 +981,28 @@ async function typeset() {
   // module blocks the main thread. Compilation is synchronous inside wasm.
   requestAnimationFrame(() => {
     const started = performance.now();
-    const html = currentFormat() === "html";
-    const result = html
-      ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes)
-      : rustyfi.compile(getDoc(), fontBytes, currentLang(), cjkBytes);
+    const fmt = currentFormat();
+    // Both Markdown tabs are the SAME compile — one renders its result, the
+    // other shows it — so switching between them costs a typeset but never a
+    // different answer.
+    const markdown = fmt === "markdown" || fmt === "markdown-src";
+    const result =
+      fmt === "html"
+        ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes)
+        : markdown
+          ? rustyfi.compileMarkdown(getDoc(), fontBytes, currentLang(), cjkBytes)
+          : rustyfi.compile(getDoc(), fontBytes, currentLang(), cjkBytes);
     const ms = Math.round(performance.now() - started);
     if (result.ok) {
-      const size = html ? new TextEncoder().encode(result.html).length : result.pdf.length;
-      if (html) showHtml(result.html);
-      else showPdf(result.pdf);
+      const payload = fmt === "html" ? result.html : markdown ? result.markdown : result.pdf;
+      const size = fmt === "pdf" ? payload.length : new TextEncoder().encode(payload).length;
+      if (fmt === "html") showHtml(payload);
+      else if (fmt === "markdown") showMarkdown(payload);
+      else if (fmt === "markdown-src") showMarkdownSource(payload);
+      else showPdf(payload);
+      const LABEL = { pdf: "PDF", html: "HTML", markdown: "Markdown", "markdown-src": "Markdown" };
       statusEl.className = "ok";
-      statusEl.textContent =
-        `typeset in ${ms} ms — ${(size / 1024).toFixed(1)} kB ${html ? "HTML" : "PDF"}`;
+      statusEl.textContent = `typeset in ${ms} ms — ${(size / 1024).toFixed(1)} kB ${LABEL[fmt]}`;
     } else {
       statusEl.className = "";
       statusEl.textContent = `failed in ${ms} ms`;
