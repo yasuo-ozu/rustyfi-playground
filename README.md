@@ -6,11 +6,19 @@ type a `.saty` document, the module typesets it, and the result appears beside
 it: **typesetting never leaves the tab**, and there is no package manager to
 reach for.
 
-The **Output** selector picks what the Typeset button produces — a **PDF**, or
-**HTML**: one continuous, self-contained web document with no pages in it,
-which the browser breaks and justifies at whatever width you give it. Both come
-from the same compile; only the serialization differs, which is why the HTML
-backend adds ~124 kB to the module rather than a second compiler.
+Four tabs over the preview pick what the Typeset button produces. **PDF** is
+the page-faithful output, with the port's own line breaking. **HTML** is one
+continuous, self-contained web document with no pages in it, which the browser
+breaks and justifies at whatever width you give it. **Markdown** is the same
+recovered structure in a much smaller vocabulary, shown rendered or as source.
+**LaTeX** is a complete, compilable `.tex` document — the same structure handed
+to another *typesetter* rather than to a reader — and it is shown as source,
+because compiling it needs a TeX engine this page does not carry.
+
+All four come from **one compile**; only the serialization differs. That is why
+each backend costs a writer rather than a second compiler: HTML adds ~124 kB to
+the module, and LaTeX 85,728 bytes (27,932 gzipped), because `rustyfi-latex`
+depends on `rustyfi-html` and reuses the structure recovery already there.
 
 The editor is a real one — mistakes are underlined as you type, hovering a name
 says what it is and which package declares it, completion offers that package's

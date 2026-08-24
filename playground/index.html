@@ -262,9 +262,14 @@
   /* Only meaningful for the RENDERED Markdown tab: the source tab is text on
      this page and already follows the page's own theme, and the PDF and HTML
      tabs carry their own. `body.fmt-markdown` is set by the tab handler. */
-  /* Equations are only written differently by the two reflowed formats; the
-     PDF has one rendering, which is why the CLI makes the flag a usage error
-     against `--format pdf`. */
+  /* Only the two REFLOWED formats write equations more than one way, so the
+     picker shows on those two tabs and no others. Both exclusions are the
+     CLI's own rule rather than a layout choice, and they are not the same
+     rule: a PDF has one rendering (`--format pdf` with a math flag is a usage
+     error), while a `.tex` reaches a math typesetter by definition, so LaTeX
+     math is the only reading with any meaning and `OutputFormat::Latex` admits
+     no mode at all. Hiding beats offering-and-ignoring either way — see
+     `syncMathOptions` for the measurement that established that. */
   .mathpick { display: none; align-items: baseline; gap: 0.3rem; margin-left: 0.6rem;
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
   body.fmt-markdown .mathpick, body.fmt-html .mathpick { display: inline-flex; }
@@ -405,6 +410,8 @@
             title="One continuous, self-contained web document — no pages, and the browser does the line breaking.">HTML</button>
           <button class="fmt" data-fmt="markdown" role="tab" aria-selected="false"
             title="The Markdown, rendered — what a reader of the file would see.">Markdown</button>
+          <button class="fmt" data-fmt="latex" role="tab" aria-selected="false"
+            title="A complete, compilable .tex document — the same structure handed to another typesetter. Shown as source, because compiling LaTeX needs a TeX engine this page does not have.">LaTeX</button>
         </span>
         <label class="mathpick" id="mathpick"
           title="How equations are written. Each is right for a different reader; the default follows the format. MathML is the only one the browser lays out itself — real structure a screen reader can read and the browser's find can search, with nothing fetched.">
@@ -913,8 +920,10 @@ function showPane(which) {
   // One iframe serves both outputs: a PDF blob the browser's viewer renders,
   // or the HTML document itself.
   previewEl.style.display = which === "pdf" || which === "html" ? "block" : "none";
-  // The Markdown SOURCE is text on this page rather than a document in the
-  // frame: it is what you would copy, so it has to be selectable here.
+  // A SOURCE output — the Markdown behind the Source toggle, or the `.tex`,
+  // which has no other presentation — is text on this page rather than a
+  // document in the frame: it is what you would copy, so it has to be
+  // selectable here.
   sourceEl.style.display = which === "source" ? "block" : "none";
   errorEl.style.display = which === "error" ? "block" : "none";
 }
@@ -1208,10 +1217,33 @@ function showMarkdownSource(md) {
   offerDownload(md, "document.md", "text/markdown;charset=utf-8");
 }
 
-/// The "— download" affordance the three renderers share. For the PDF it is
+/// The `.tex` itself, in the same pane the Markdown source uses.
+///
+/// **Source is the only presentation this tab has, and that is not a gap being
+/// left for later.** The other three outputs are all things a browser can
+/// display: it renders a PDF, it renders HTML, and Markdown has a renderer
+/// vendored beside the editor. LaTeX has no such thing — compiling it needs a
+/// TeX engine, which is tens of megabytes of WebAssembly on its own and would
+/// dwarf the typesetter this page exists to show. So there is no Source toggle
+/// here to press, and no rendered view withheld behind one.
+///
+/// That makes the tab honest rather than lesser: a `.tex` is a source file by
+/// nature. It is what you would paste into a document or hand to `lualatex`,
+/// and the pane it lands in is selectable text on this page for exactly that
+/// reason.
+function showLatexSource(tex) {
+  sourceEl.textContent = tex;
+  showPane("source");
+  // `text/x-tex` is the registered type and what an editor will recognise;
+  // the extension is what a TeX distribution keys on.
+  offerDownload(tex, "document.tex", "text/x-tex;charset=utf-8");
+}
+
+/// The "— download" affordance the four renderers share. For the PDF it is
 /// the only way to read the output in a browser that will not frame one; for
 /// the text formats it is how you get the file itself rather than a rendering
-/// of it.
+/// of it — and for the `.tex`, which has no rendering here at all, it is how
+/// you get the document to an engine that can compile it.
 function offerDownload(data, name, type) {
   const url = URL.createObjectURL(new Blob([data], { type }));
   $("dl").innerHTML = "";
@@ -1353,15 +1385,25 @@ function renderOnce() {
       ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes, mathMode)
       : markdown
         ? rustyfi.compileMarkdown(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes, mathMode)
-        : rustyfi.compile(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes);
+        : fmt === "latex"
+          ? rustyfi.compileLatex(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes)
+          : rustyfi.compile(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes);
   const ms = Math.round(performance.now() - started);
   if (result.ok) {
-    const payload = fmt === "html" ? result.html : markdown ? result.markdown : result.pdf;
+    const payload =
+      fmt === "html"
+        ? result.html
+        : markdown
+          ? result.markdown
+          : fmt === "latex"
+            ? result.latex
+            : result.pdf;
     const size = fmt === "pdf" ? payload.length : new TextEncoder().encode(payload).length;
     if (fmt === "html") showHtml(payload);
     else if (fmt === "markdown") showMarkdownAs(payload);
+    else if (fmt === "latex") showLatexSource(payload);
     else showPdf(payload);
-    const LABEL = { pdf: "PDF", html: "HTML", markdown: "Markdown" };
+    const LABEL = { pdf: "PDF", html: "HTML", markdown: "Markdown", latex: "LaTeX" };
     statusEl.className = "ok";
     statusEl.textContent = `typeset in ${ms} ms — ${(size / 1024).toFixed(1)} kB ${LABEL[fmt]}`;
   } else {

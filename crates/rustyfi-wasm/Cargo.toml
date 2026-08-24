@@ -39,6 +39,11 @@ rustyfi-pdf = { path = "../../rustyfi/crates/rustyfi-pdf" }
 # `build_document` the PDF path does — only the serialization differs — so it
 # adds no compiler code to the module, just the writer.
 rustyfi-html = { path = "../../rustyfi/crates/rustyfi-html" }
+# The LaTeX backend, for the page's "LaTeX" tab. The same `build_document`
+# again, and it depends ON `rustyfi-html` rather than forking it: the structure
+# recovery both writers walk lives in `rustyfi_html::recover`, so this adds a
+# serializer and not a second recovery.
+rustyfi-latex = { path = "../../rustyfi/crates/rustyfi-latex" }
 rustyfi-loader = { path = "../../rustyfi/crates/rustyfi-loader" }
 # The editor's fast tier: lex and parse diagnostics, positioned in UTF-16 code
 # units, for both generations. `default-features = false` is not an

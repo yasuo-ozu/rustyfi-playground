@@ -109,8 +109,29 @@ function wrap(instance) {
       );
     },
 
-    /// The shared body of the three above: push the source and both faces,
-    /// and turn the `Output` into `{ ok, pdf | html | markdown }` or `{ ok: false, error }`.
+    /// Compile SATySFi source to a complete, compilable LaTeX document.
+    /// Returns `{ ok: true, latex }` or `{ ok: false, error }`.
+    ///
+    /// No `mathMode`, and `null` is passed for it rather than `0`: a `.tex`
+    /// reaches a math typesetter by definition, so LaTeX math is the only
+    /// reading with any meaning and `OutputFormat::Latex` admits no choice.
+    /// The ABI reflects that — `rustyfi_compile_latex_fonts` takes the PDF
+    /// entry point's argument list, not the two text backends' — so `null`
+    /// here is not "the default", it is "this ABI has no such argument".
+    ///
+    /// The font is read for one thing only, the same one Markdown reads it
+    /// for: whether a run is fixed-pitch, which separates a `verbatim` from a
+    /// paragraph. Nothing is embedded — a `.tex` names its fonts and lets the
+    /// engine find them.
+    compileLatex(source, font, lang = 0, cjkFont = null, mathFont = null) {
+      return this.render(
+        ex.rustyfi_compile_latex_fonts, source, font, lang, cjkFont, mathFont, null, "latex",
+      );
+    },
+
+    /// The shared body of the four above: push the source and every face, and
+    /// turn the `Output` into `{ ok, pdf | html | markdown | latex }` or
+    /// `{ ok: false, error }`.
     ///
     /// `field` names the successful payload, which is the only difference
     /// between them — the PDF is bytes, the two text formats are decoded.

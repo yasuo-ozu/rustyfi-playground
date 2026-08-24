@@ -1504,8 +1504,16 @@ StdJa.document (| title = {t}; author = {a} |) '<
   // The format dropdown is gone; the four tabs replace it. A stale `#format`
   // would mean `currentFormat()` reads a control nothing updates.
   check("the output format is chosen by tabs, not a dropdown",
-    !/id="format"/.test(page) && (page.match(/class="fmt[ "]/g) ?? []).length === 3,
+    !/id="format"/.test(page) && (page.match(/class="fmt[ "]/g) ?? []).length === 4,
     `${(page.match(/class="fmt[ "]/g) ?? []).length} tabs, dropdown ${/id="format"/.test(page)}`);
+  check("the LaTeX tab is one of them", /data-fmt="latex"/.test(page));
+  // `OutputFormat::Latex` admits NO math mode — a `.tex` reaches a math
+  // typesetter by definition — so the picker must not appear on that tab. This
+  // is the `syncMathOptions` rule one step earlier: there, a mode that would be
+  // ignored is disabled; here, a whole control that would be is not shown.
+  check("the math picker is not offered on the LaTeX tab",
+    !/fmt-latex[^{,]*\.mathpick/.test(page),
+    "a control whose every value the backend ignores would be offered");
   // Source is a PRESENTATION of the Markdown result, not a fourth format: both
   // come from one compile, so a tab made switching cost a typeset.
   check("Markdown source is a toggle beside the theme buttons, not a tab",
@@ -1681,6 +1689,52 @@ StdJa.document (| title = {t}; author = {a} |) '<
     "the Markdown-mode error is readable",
     !badMd.ok && badMd.error.trim().length > 0,
     JSON.stringify(badMd.error),
+  );
+}
+
+// 5d′. The LaTeX render mode. The same recovered structure once more, handed to
+//      another TYPESETTER rather than to a reader — so what is worth pinning is
+//      that it is a COMPLETE document rather than a fragment (a preamble is the
+//      difference between something `lualatex` compiles and something it
+//      refuses), that it is LaTeX rather than one of the two sibling writers,
+//      and that the structure survived the crossing.
+{
+  const tex = rustyfi.compileLatex(HELLO, fontBytes);
+  check("the LaTeX mode compiles", tex.ok, tex.ok ? "" : tex.error);
+  if (tex.ok) {
+    // Complete, not a fragment. All three, because each is a different way of
+    // being incomplete: no preamble, no body, or a body left unclosed.
+    for (const marker of ["\\documentclass", "\\begin{document}", "\\end{document}"]) {
+      check(`the LaTeX output has ${marker}`, tex.latex.includes(marker),
+        "a fragment is not something a TeX engine will compile");
+    }
+    // NOT one of its siblings. The three writers share `rustyfi_html::recover`,
+    // so a mis-wired tab would produce perfectly valid output of the wrong
+    // kind — and "is not empty" would not notice.
+    check("the LaTeX output is not HTML", !/<!doctype|<p class=/i.test(tex.latex),
+      "the HTML writer answered on the LaTeX tab");
+    console.log(`     rendered ${new TextEncoder().encode(tex.latex).length} bytes of LaTeX`);
+  }
+  // Structure, on a document that HAS some — as for Markdown above, and for
+  // the same reason: HELLO is one paragraph and would pin nothing.
+  const structured = EXAMPLES.find((e) => /full document class/i.test(e.name));
+  const richTex = rustyfi.compileLatex(
+    structured?.source ?? HELLO, fontBytes, structured?.lang ?? 0,
+  );
+  if (richTex.ok) {
+    check(
+      "a structured document yields LaTeX sectioning",
+      /\\(?:sub)*section\*?\{/.test(richTex.latex),
+      "no sectioning command in the output",
+    );
+  }
+  // A broken document must take the error path here too, not trap.
+  const badTex = rustyfi.compileLatex("@require: stdja-mini\nthis is not a document");
+  check("a broken document fails in LaTeX mode too", !badTex.ok, "it compiled!");
+  check(
+    "the LaTeX-mode error is readable",
+    !badTex.ok && badTex.error.trim().length > 0,
+    JSON.stringify(badTex.error),
   );
 }
 

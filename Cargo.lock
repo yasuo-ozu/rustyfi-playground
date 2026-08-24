@@ -668,6 +668,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustyfi-latex"
+version = "0.1.4"
+dependencies = [
+ "rustyfi-backend",
+ "rustyfi-html",
+ "rustyfi-pdf",
+ "thiserror",
+]
+
+[[package]]
 name = "rustyfi-loader"
 version = "0.1.4"
 dependencies = [
@@ -716,6 +726,7 @@ dependencies = [
  "rustyfi-backend",
  "rustyfi-html",
  "rustyfi-lang",
+ "rustyfi-latex",
  "rustyfi-loader",
  "rustyfi-lsp",
  "rustyfi-pdf",

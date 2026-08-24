@@ -602,6 +602,62 @@ pub fn compile_markdown_with_fonts_lang(
     .map_err(|e| e.to_string())
 }
 
+/// LaTeX: the same recovered structure again, written for another TYPESETTER
+/// rather than for a reader or a browser — a complete, compilable `.tex`
+/// document.
+///
+/// **No math mode, and that is the library's rule rather than an omission
+/// here.** `OutputFormat::Latex` takes none: the choice exists because a `.md`
+/// or an `.html` may or may not reach a math typesetter, while a `.tex`
+/// reaches one by definition, so LaTeX math is the only reading with any
+/// meaning. The CLI refuses the flags against `--format latex` instead of
+/// accepting and ignoring them, and the page hides the picker on this tab for
+/// the same reason — see `syncMathOptions`.
+///
+/// The store is read for exactly one thing, and it is the same one Markdown
+/// needs it for: whether a run's face is fixed-pitch, which is the whole
+/// difference between a `verbatim` and a paragraph. No face is EMBEDDED — a
+/// `.tex` names its fonts and lets the engine find them — so unlike the PDF
+/// path there is nothing here that a missing face makes wrong, only less
+/// precise.
+pub fn compile_latex_with_fonts_lang(
+    source: &str,
+    font: Option<Vec<u8>>,
+    cjk: Option<Vec<u8>>,
+    math: Option<Vec<u8>>,
+    lang: Lang,
+) -> Result<String, String> {
+    let store = font_store(font, cjk, math)?;
+    let base14 = rustyfi_pdf::Base14Metrics;
+    let metrics: &dyn rustyfi_backend::FontMetrics = match &store {
+        Some(store) => store,
+        None => &base14,
+    };
+
+    let doc = build_document(source, metrics, lang)?;
+
+    match &store {
+        Some(store) => rustyfi_latex::render_latex_ttf_with(
+            doc.reflow_source.as_deref(),
+            &doc.geometry,
+            store,
+            &doc.images,
+            &doc.extras,
+            &doc.reflow_links,
+            &doc.reflow_dests,
+        ),
+        None => rustyfi_latex::render_latex(
+            doc.reflow_source.as_deref(),
+            &doc.geometry,
+            &doc.images,
+            &doc.extras,
+            &doc.reflow_links,
+            &doc.reflow_dests,
+        ),
+    }
+    .map_err(|e| e.to_string())
+}
+
 /// [`compile_html_with_font_lang`], additionally taking a CJK face.
 ///
 /// The reflowable backend NAMES faces rather than embedding them, so what a
@@ -1126,6 +1182,45 @@ pub unsafe extern "C" fn rustyfi_compile_markdown_fonts(
     let math = unsafe { borrowed_font(math, math_len) };
     let result = match std::str::from_utf8(bytes) {
         Ok(source) => compile_markdown_with_fonts_lang(source, font, cjk, math, math_mode_id, Lang::from_u32(lang))
+            .map(String::into_bytes),
+        Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
+    };
+    Output::from_result(result).into_raw()
+}
+
+/// [`rustyfi_compile_html_fonts`]'s LaTeX counterpart: the successful payload
+/// is a complete, compilable UTF-8 `.tex` document.
+///
+/// **Takes no `math_mode_id`**, so its argument list is
+/// [`rustyfi_compile_with_fonts_lang`]'s rather than the two text backends'.
+/// That is deliberate and load-bearing at the ABI: `OutputFormat::Latex`
+/// admits no math mode, and an argument accepted here would have to be
+/// ignored, which is the one shape this module avoids everywhere else.
+///
+/// # Safety
+/// As [`rustyfi_compile_with_font`], for all four buffers.
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_compile_latex_fonts(
+    src: *const u8,
+    len: usize,
+    font: *const u8,
+    font_len: usize,
+    cjk: *const u8,
+    cjk_len: usize,
+    math: *const u8,
+    math_len: usize,
+    lang: u32,
+) -> *mut Output {
+    let bytes: &[u8] = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src, len) }
+    };
+    let font = unsafe { borrowed_font(font, font_len) };
+    let cjk = unsafe { borrowed_font(cjk, cjk_len) };
+    let math = unsafe { borrowed_font(math, math_len) };
+    let result = match std::str::from_utf8(bytes) {
+        Ok(source) => compile_latex_with_fonts_lang(source, font, cjk, math, Lang::from_u32(lang))
             .map(String::into_bytes),
         Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
     };

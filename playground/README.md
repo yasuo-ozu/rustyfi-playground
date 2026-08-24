@@ -360,6 +360,15 @@ These are properties of a browser build, not of the typesetter:
   to fetch anything else from; the "Packages" panel lists the selected
   generation's set, with each package's upstream, version and licence, and
   both sets together are the exhaustive list (see *Cross-version import*).
+- **The LaTeX tab shows source, and there is no rendering behind a toggle.**
+  The other three outputs are all things a browser displays on its own — it
+  renders a PDF, it renders HTML, and a Markdown renderer is vendored beside
+  the editor. Compiling LaTeX needs a TeX engine, which is tens of megabytes
+  of WebAssembly by itself and would dwarf the typesetter this page exists to
+  show. A `.tex` is a source file by nature, so the tab is honest rather than
+  reduced: it is what you would paste into a document or hand to `lualatex`,
+  and the *download* link gives you the file. The generated preamble states
+  which engine the document needs and enforces it with `iftex`.
 - **No filesystem**, so `load-image`, `read-file` and `load-pdf-image` have
   nothing to read. `load-pdf-image` is not compiled in at all (its reader pulls
   in `rayon` and `getrandom`, neither of which builds for
