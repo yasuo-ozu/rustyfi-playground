@@ -81,11 +81,25 @@ function wrap(instance) {
       return this.render(ex.rustyfi_compile_html_fonts, source, font, lang, cjkFont, "html");
     },
 
-    /// The shared body of the two above: push the source and both faces, call,
-    /// and turn the `Output` into `{ ok, pdf | html }` or `{ ok: false, error }`.
+    /// Compile SATySFi source to GitHub-flavoured Markdown. Returns
+    /// `{ ok: true, markdown }` or `{ ok: false, error }`.
+    ///
+    /// The font is not optional in practice, for a reason peculiar to this
+    /// backend: Markdown names no fonts at all, but the writer reads the
+    /// family name off the store to decide which runs are fixed-pitch, and
+    /// that is the whole difference between a fenced code block and a
+    /// paragraph of prose.
+    compileMarkdown(source, font, lang = 0, cjkFont = null) {
+      return this.render(
+        ex.rustyfi_compile_markdown_fonts, source, font, lang, cjkFont, "markdown",
+      );
+    },
+
+    /// The shared body of the three above: push the source and both faces,
+    /// and turn the `Output` into `{ ok, pdf | html | markdown }` or `{ ok: false, error }`.
     ///
     /// `field` names the successful payload, which is the only difference
-    /// between them — one returns bytes, the other decodes them as UTF-8.
+    /// between them — the PDF is bytes, the two text formats are decoded.
     render(fn, source, font, lang, cjkFont, field) {
       const src = new TextEncoder().encode(source);
       let srcPtr = 0, srcLen = 0, fontPtr = 0, fontLen = 0, cjkPtr = 0, cjkLen = 0;
@@ -97,7 +111,8 @@ function wrap(instance) {
           fn(srcPtr, srcLen, fontPtr, fontLen, cjkPtr, cjkLen, lang),
         );
         if (!ok) return { ok: false, error: text(bytes) };
-        return { ok: true, [field]: field === "html" ? text(bytes) : bytes };
+        // Only the PDF is bytes; every other backend's payload is UTF-8.
+        return { ok: true, [field]: field === "pdf" ? bytes : text(bytes) };
       } catch (e) {
         trapped = true;
         return {

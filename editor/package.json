@@ -2,7 +2,7 @@
   "name": "rustyfi-playground-editor",
   "private": true,
   "type": "module",
-  "description": "Build tooling for the vendored CodeMirror 6 bundle the playground serves from its own origin.",
+  "description": "Build tooling for the vendored browser bundles the playground serves from its own origin: the CodeMirror 6 editor and the Markdown renderer.",
   "scripts": {
     "build": "node build.mjs"
   },
@@ -14,6 +14,7 @@
     "@codemirror/state": "^6.4.0",
     "@codemirror/view": "^6.34.0",
     "@lezer/highlight": "^1.2.0",
-    "esbuild": "^0.24.0"
+    "esbuild": "^0.24.0",
+    "marked": "^15.0.0"
   }
 }

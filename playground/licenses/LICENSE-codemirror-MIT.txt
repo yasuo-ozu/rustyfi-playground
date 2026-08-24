@@ -1,10 +1,10 @@
 CodeMirror 6, as bundled into playground/vendor/codemirror.js
-==============================================================
+=============================================================
 
-The playground serves its editor from its own origin — nothing is fetched from
-a CDN at runtime — so the bundle is committed to this repository and its
-licences travel with it. Every package below is MIT licensed. The bundle was
-produced by editor/build.mjs from editor/package.json; rebuild it with
+The playground serves this from its own origin — nothing is fetched from a CDN
+at runtime — so the bundle is committed to this repository and its licences
+travel with it. Every package below is MIT licensed. The bundle was produced by
+editor/build.mjs from editor/package.json; rebuild it with
 `cd editor && npm run build`.
 
 @codemirror/autocomplete 6.20.3
