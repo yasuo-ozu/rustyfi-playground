@@ -448,6 +448,18 @@ let fontBytes = null;
 /// is the three style slots, this is the ABBREVS (`ipaexm`, `ipaexg`) that a
 /// document names.
 let cjkBytes = null;
+/// Latin Modern Math, fetched beside the Latin face.
+///
+/// Eager, unlike the CJK face, and the asymmetry is deliberate. A document
+/// that needs Japanese and does not get it renders BLANK BOXES — impossible
+/// to miss, and worth 5.8 MB only when asked for. A document that needs a
+/// MATH table and does not get it still renders: `Context::math_font` falls
+/// back to the text face, which has none, and every constant math layout
+/// reads becomes a guess. Limits land on their operator, fraction bars
+/// vanish, fences stop stretching. Subtly, plausibly wrong is worse than
+/// obviously broken, and this face is 0.7 MB against a 7.9 MB module — under
+/// a tenth — so it is not worth sniffing the document for `${` to save.
+let mathBytes = null;
 /// Set once a CJK fetch has failed, so a document full of Japanese does not
 /// re-download five megabytes on every keystroke-triggered typeset.
 let cjkFailed = false;
@@ -725,6 +737,18 @@ async function loadBundledFont() {
     showToast(
       "Could not load the bundled font — base-14 only, so most examples will " +
       "report an encoding error instead of rendering.",
+    );
+  }
+  try {
+    const res = await fetch("./fonts/latinmodern-math.otf");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    mathBytes = new Uint8Array(await res.arrayBuffer());
+  } catch (e) {
+    // Said out loud, because the alternative is an equation that renders and
+    // is quietly wrong.
+    showToast(
+      "Could not load the math font — equations will render with their limits " +
+      "and fraction bars misplaced.",
     );
   }
 }
@@ -1011,10 +1035,10 @@ function renderOnce() {
   const markdown = fmt === "markdown" || fmt === "markdown-src";
   const result =
     fmt === "html"
-      ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes)
+      ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes)
       : markdown
-        ? rustyfi.compileMarkdown(getDoc(), fontBytes, currentLang(), cjkBytes)
-        : rustyfi.compile(getDoc(), fontBytes, currentLang(), cjkBytes);
+        ? rustyfi.compileMarkdown(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes)
+        : rustyfi.compile(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes);
   const ms = Math.round(performance.now() - started);
   if (result.ok) {
     const payload = fmt === "html" ? result.html : markdown ? result.markdown : result.pdf;

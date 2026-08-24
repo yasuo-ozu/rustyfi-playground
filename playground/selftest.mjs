@@ -1433,6 +1433,9 @@ StdJa.document (| title = {t}; author = {a} |) '<
     .filter((u) => !/github\.com|opensource\.org/.test(u));
   check("the page fetches nothing from another origin", fetched.length === 0, fetched.join(" "));
   check("the page loads the vendored editor", /from "\.\/vendor\/codemirror\.js"/.test(page));
+  check("the page bundles a math face", /\.\/fonts\/latinmodern-math\.otf/.test(page),
+    "the page never fetches a MATH-table font, so equations will lay out against " +
+    "the text face and collapse");
   check("the page loads the vendored Markdown renderer",
     /from "\.\/vendor\/markdown\.js"/.test(page));
   // The format dropdown is gone; the four tabs replace it. A stale `#format`
@@ -1514,6 +1517,55 @@ StdJa.document (| title = {t}; author = {a} |) '<
     !badMd.ok && badMd.error.trim().length > 0,
     JSON.stringify(badMd.error),
   );
+}
+
+// 5e. THE MATH FACE. A text face has no `MATH` table, so without a separate
+//     math font `Context::math_font` falls back to the Latin one and every
+//     constant math layout reads becomes a guess: limits land on top of their
+//     operator, fraction bars vanish, fences stop stretching. It RENDERS —
+//     which is why this needs a test rather than an error path.
+{
+  const mathBytes = await readFile(
+    new URL("./fonts/latinmodern-math.otf", import.meta.url),
+  ).catch(() =>
+    readFile(
+      new URL("../rustyfi/lib-rustyfi/dist/fonts/latinmodern-math.otf", import.meta.url),
+    ).catch(() => null),
+  );
+  check(
+    "the math face is available to test against",
+    mathBytes !== null,
+    "latinmodern-math.otf is in neither playground/fonts/ nor the submodule — " +
+      "run `sh rustyfi/download-fonts.sh`",
+  );
+  if (mathBytes !== null && fontBytes !== null) {
+    const EQ = "@require: stdja-mini\n@require: math\n" +
+      "document (|title = {m}; author = {a}|) '<+p{${\\sum_{k=1}^{n} k^2 = \\frac{1}{6}}}>";
+    const withMath = rustyfi.compile(EQ, fontBytes, 0, null, mathBytes);
+    const without = rustyfi.compile(EQ, fontBytes, 0, null, null);
+    check("an equation compiles with the math face", withMath.ok,
+      withMath.ok ? "" : withMath.error);
+    check("an equation compiles without one too", without.ok,
+      without.ok ? "" : without.error);
+    // The load-bearing one. Both succeed; what proves the math face actually
+    // reached the LAYOUT is that the two PDFs differ. If this ever passes
+    // vacuously, the face is being accepted and ignored.
+    if (withMath.ok && without.ok) {
+      const same =
+        withMath.pdf.length === without.pdf.length &&
+        withMath.pdf.every((b, i) => b === without.pdf[i]);
+      check(
+        "the math face changes the typeset result",
+        !same,
+        "identical output with and without a MATH-table face — the math " +
+          "default is not reaching Context::math_font",
+      );
+      console.log(
+        `     equation: ${without.pdf.length} bytes without a math face, ` +
+          `${withMath.pdf.length} with`,
+      );
+    }
+  }
 }
 
 // A link a browser cannot decode must SAY so rather than load garbage.

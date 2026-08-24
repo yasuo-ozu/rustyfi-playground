@@ -64,8 +64,10 @@ function wrap(instance) {
     /// `set-font HanIdeographic` naming one of those resolves onto the Latin
     /// face and the document typesets `.notdef` WITHOUT failing, so leaving it
     /// out for a Japanese document is a silent wrong answer, not an error.
-    compile(source, font, lang = 0, cjkFont = null) {
-      return this.render(ex.rustyfi_compile_with_fonts_lang, source, font, lang, cjkFont, "pdf");
+    compile(source, font, lang = 0, cjkFont = null, mathFont = null) {
+      return this.render(
+        ex.rustyfi_compile_with_fonts_lang, source, font, lang, cjkFont, mathFont, "pdf",
+      );
     },
 
     /// Compile SATySFi source to a self-contained HTML page. Same inputs and
@@ -77,8 +79,10 @@ function wrap(instance) {
     /// what tells it a run is fixed-pitch — the only signal separating a
     /// `+code` block from a wrapped paragraph. `cjkFont` puts `IPAexGothic` at
     /// the head of a Japanese run's family stack for the same reason.
-    compileHtml(source, font, lang = 0, cjkFont = null) {
-      return this.render(ex.rustyfi_compile_html_fonts, source, font, lang, cjkFont, "html");
+    compileHtml(source, font, lang = 0, cjkFont = null, mathFont = null) {
+      return this.render(
+        ex.rustyfi_compile_html_fonts, source, font, lang, cjkFont, mathFont, "html",
+      );
     },
 
     /// Compile SATySFi source to GitHub-flavoured Markdown. Returns
@@ -89,9 +93,9 @@ function wrap(instance) {
     /// family name off the store to decide which runs are fixed-pitch, and
     /// that is the whole difference between a fenced code block and a
     /// paragraph of prose.
-    compileMarkdown(source, font, lang = 0, cjkFont = null) {
+    compileMarkdown(source, font, lang = 0, cjkFont = null, mathFont = null) {
       return this.render(
-        ex.rustyfi_compile_markdown_fonts, source, font, lang, cjkFont, "markdown",
+        ex.rustyfi_compile_markdown_fonts, source, font, lang, cjkFont, mathFont, "markdown",
       );
     },
 
@@ -100,15 +104,17 @@ function wrap(instance) {
     ///
     /// `field` names the successful payload, which is the only difference
     /// between them — the PDF is bytes, the two text formats are decoded.
-    render(fn, source, font, lang, cjkFont, field) {
+    render(fn, source, font, lang, cjkFont, mathFont, field) {
       const src = new TextEncoder().encode(source);
-      let srcPtr = 0, srcLen = 0, fontPtr = 0, fontLen = 0, cjkPtr = 0, cjkLen = 0;
+      let srcPtr = 0, srcLen = 0, fontPtr = 0, fontLen = 0;
+      let cjkPtr = 0, cjkLen = 0, mathPtr = 0, mathLen = 0;
       try {
         [srcPtr, srcLen] = push(src);
         [fontPtr, fontLen] = push(font);
         [cjkPtr, cjkLen] = push(cjkFont);
+        [mathPtr, mathLen] = push(mathFont);
         const { ok, bytes } = take(
-          fn(srcPtr, srcLen, fontPtr, fontLen, cjkPtr, cjkLen, lang),
+          fn(srcPtr, srcLen, fontPtr, fontLen, cjkPtr, cjkLen, mathPtr, mathLen, lang),
         );
         if (!ok) return { ok: false, error: text(bytes) };
         // Only the PDF is bytes; every other backend's payload is UTF-8.
@@ -127,6 +133,7 @@ function wrap(instance) {
         if (srcPtr !== 0) ex.rustyfi_dealloc(srcPtr, srcLen);
         if (fontPtr !== 0) ex.rustyfi_dealloc(fontPtr, fontLen);
         if (cjkPtr !== 0) ex.rustyfi_dealloc(cjkPtr, cjkLen);
+        if (mathPtr !== 0) ex.rustyfi_dealloc(mathPtr, mathLen);
       }
     },
 
@@ -277,6 +284,14 @@ export async function instantiate(wasmBytes) {
 /// serve `.wasm` with the wrong MIME type, which makes the streaming path
 /// throw.
 export async function instantiateFromUrl(url) {
+  // Inherit this module's own `?v=` (the deploy stamps the commit onto every
+  // module specifier). Without it the WASM is cached on its own terms, so a
+  // fresh page could load a fresh `rustyfi.js` beside a ten-minute-old module
+  // whose exports it no longer matches — the same split that produced
+  // `compileMarkdown is not a function`, one layer down and harder to read,
+  // because a missing WASM export surfaces as a failure inside this file.
+  const version = new URL(import.meta.url).search;
+  if (version && !String(url).includes("?")) url = `${url}${version}`;
   const response = await fetch(url);
   if (!response.ok) throw new Error(`rustyfi: cannot fetch ${url} (HTTP ${response.status})`);
   try {

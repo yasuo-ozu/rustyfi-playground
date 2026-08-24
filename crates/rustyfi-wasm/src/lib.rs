@@ -365,7 +365,7 @@ pub fn compile_with_font_lang(
     font: Option<Vec<u8>>,
     lang: Lang,
 ) -> Result<Vec<u8>, String> {
-    compile_with_fonts_lang(source, font, None, lang)
+    compile_with_fonts_lang(source, font, None, None, lang)
 }
 
 /// The CJK abbrevs the bundled document classes actually ask for.
@@ -381,6 +381,12 @@ pub fn compile_with_font_lang(
 /// page that otherwise weighs 8.8 MB, for a difference visible only in
 /// section headings.
 const CJK_ABBREVS: [&str; 2] = ["ipaexm", "ipaexg"];
+
+/// The abbrev the math face is registered under. Matches the name the bundled
+/// `default-font.satysfi-hash` uses, so a document that says
+/// `set-math-font `lmmath`` resolves the same way here as it does under the
+/// CLI.
+const MATH_ABBREV: &str = "lmmath";
 
 /// The size ratio the bundled `default-font.satysfi-hash` gives CJK, and the
 /// figure upstream SATySFi's own configuration uses: an IPAex em box is drawn
@@ -404,19 +410,26 @@ const CJK_RATIO: f64 = 0.88;
 fn font_store(
     font: Option<Vec<u8>>,
     cjk: Option<Vec<u8>>,
+    math: Option<Vec<u8>>,
 ) -> Result<Option<rustyfi_pdf::TtfFontStore>, String> {
+    // A math face ALONE does not make a store: it is registered as an abbrev
+    // beside the text faces, and with no text face there is nothing to set it
+    // beside. Base-14 has no MATH table either, so this is base-14 as before.
     let (regular, cjk) = match (font, cjk) {
         (None, None) => return Ok(None),
         (Some(regular), cjk) => (regular, cjk),
         (None, Some(cjk)) => (cjk.clone(), Some(cjk)),
     };
-    let named: Vec<(String, Vec<u8>)> = match &cjk {
+    let mut named: Vec<(String, Vec<u8>)> = match &cjk {
         Some(bytes) => CJK_ABBREVS
             .iter()
             .map(|abbrev| ((*abbrev).to_string(), bytes.clone()))
             .collect(),
         None => Vec::new(),
     };
+    if let Some(bytes) = &math {
+        named.push((MATH_ABBREV.to_string(), bytes.clone()));
+    }
     let store = rustyfi_pdf::TtfFontStore::from_bytes_with_abbrevs(
         regular,
         None,
@@ -425,6 +438,18 @@ fn font_store(
         "the supplied font",
     )
     .map_err(|e| e.to_string())?;
+
+    // The math face, if one was given. A store built from a FONT ROOT gets
+    // this from `default-font.satysfi-hash`'s `"math"` abbrev; a byte-built
+    // store has no hash file, so without this `Context::math_font` stays at
+    // its seed — the LATIN face, which has no `MATH` table. Every constant
+    // math layout reads then falls back to a guess and an equation collapses:
+    // limits land on their operator, fraction bars vanish, nested fractions
+    // flatten, fences stop stretching. It renders; it is simply wrong.
+    let store = match store.abbrev_key(MATH_ABBREV) {
+        Some(key) => store.with_math_default(key),
+        None => store,
+    };
 
     // Only when a CJK face was actually registered: `abbrev_key` would be
     // `None` otherwise, and pointing a script default at the Latin face is
@@ -453,9 +478,10 @@ pub fn compile_with_fonts_lang(
     source: &str,
     font: Option<Vec<u8>>,
     cjk: Option<Vec<u8>>,
+    math: Option<Vec<u8>>,
     lang: Lang,
 ) -> Result<Vec<u8>, String> {
-    let store = font_store(font, cjk)?;
+    let store = font_store(font, cjk, math)?;
     let base14 = rustyfi_pdf::Base14Metrics;
     let metrics: &dyn rustyfi_backend::FontMetrics = match &store {
         Some(store) => store,
@@ -495,7 +521,7 @@ pub fn compile_html_with_font_lang(
     font: Option<Vec<u8>>,
     lang: Lang,
 ) -> Result<String, String> {
-    compile_html_with_fonts_lang(source, font, None, lang)
+    compile_html_with_fonts_lang(source, font, None, None, lang)
 }
 
 /// Markdown: the same recovered structure the reflowable HTML backend walks,
@@ -510,9 +536,10 @@ pub fn compile_markdown_with_fonts_lang(
     source: &str,
     font: Option<Vec<u8>>,
     cjk: Option<Vec<u8>>,
+    math: Option<Vec<u8>>,
     lang: Lang,
 ) -> Result<String, String> {
-    let store = font_store(font, cjk)?;
+    let store = font_store(font, cjk, math)?;
     let base14 = rustyfi_pdf::Base14Metrics;
     let metrics: &dyn rustyfi_backend::FontMetrics = match &store {
         Some(store) => store,
@@ -554,9 +581,10 @@ pub fn compile_html_with_fonts_lang(
     source: &str,
     font: Option<Vec<u8>>,
     cjk: Option<Vec<u8>>,
+    math: Option<Vec<u8>>,
     lang: Lang,
 ) -> Result<String, String> {
-    let store = font_store(font, cjk)?;
+    let store = font_store(font, cjk, math)?;
     let base14 = rustyfi_pdf::Base14Metrics;
     let metrics: &dyn rustyfi_backend::FontMetrics = match &store {
         Some(store) => store,
@@ -936,6 +964,8 @@ pub unsafe extern "C" fn rustyfi_compile_with_fonts_lang(
     font_len: usize,
     cjk: *const u8,
     cjk_len: usize,
+    math: *const u8,
+    math_len: usize,
     lang: u32,
 ) -> *mut Output {
     let bytes: &[u8] = if src.is_null() || len == 0 {
@@ -945,8 +975,9 @@ pub unsafe extern "C" fn rustyfi_compile_with_fonts_lang(
     };
     let font = unsafe { borrowed_font(font, font_len) };
     let cjk = unsafe { borrowed_font(cjk, cjk_len) };
+    let math = unsafe { borrowed_font(math, math_len) };
     let result = match std::str::from_utf8(bytes) {
-        Ok(source) => compile_with_fonts_lang(source, font, cjk, Lang::from_u32(lang)),
+        Ok(source) => compile_with_fonts_lang(source, font, cjk, math, Lang::from_u32(lang)),
         Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
     };
     Output::from_result(result).into_raw()
@@ -1009,6 +1040,8 @@ pub unsafe extern "C" fn rustyfi_compile_html_fonts(
     font_len: usize,
     cjk: *const u8,
     cjk_len: usize,
+    math: *const u8,
+    math_len: usize,
     lang: u32,
 ) -> *mut Output {
     let bytes: &[u8] = if src.is_null() || len == 0 {
@@ -1018,8 +1051,9 @@ pub unsafe extern "C" fn rustyfi_compile_html_fonts(
     };
     let font = unsafe { borrowed_font(font, font_len) };
     let cjk = unsafe { borrowed_font(cjk, cjk_len) };
+    let math = unsafe { borrowed_font(math, math_len) };
     let result = match std::str::from_utf8(bytes) {
-        Ok(source) => compile_html_with_fonts_lang(source, font, cjk, Lang::from_u32(lang))
+        Ok(source) => compile_html_with_fonts_lang(source, font, cjk, math, Lang::from_u32(lang))
             .map(String::into_bytes),
         Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
     };
@@ -1039,6 +1073,8 @@ pub unsafe extern "C" fn rustyfi_compile_markdown_fonts(
     font_len: usize,
     cjk: *const u8,
     cjk_len: usize,
+    math: *const u8,
+    math_len: usize,
     lang: u32,
 ) -> *mut Output {
     let bytes: &[u8] = if src.is_null() || len == 0 {
@@ -1048,8 +1084,9 @@ pub unsafe extern "C" fn rustyfi_compile_markdown_fonts(
     };
     let font = unsafe { borrowed_font(font, font_len) };
     let cjk = unsafe { borrowed_font(cjk, cjk_len) };
+    let math = unsafe { borrowed_font(math, math_len) };
     let result = match std::str::from_utf8(bytes) {
-        Ok(source) => compile_markdown_with_fonts_lang(source, font, cjk, Lang::from_u32(lang))
+        Ok(source) => compile_markdown_with_fonts_lang(source, font, cjk, math, Lang::from_u32(lang))
             .map(String::into_bytes),
         Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
     };
@@ -1563,7 +1600,7 @@ mod tests {
             return;
         };
 
-        let none = font_store(Some(latin.clone()), None)
+        let none = font_store(Some(latin.clone()), None, None)
             .expect("the face should parse")
             .expect("a face was given");
         assert_eq!(
@@ -1573,7 +1610,7 @@ mod tests {
              heuristic silently picks the Latin one",
         );
 
-        let store = font_store(Some(latin), Some(cjk))
+        let store = font_store(Some(latin), Some(cjk), None)
             .expect("both faces should parse")
             .expect("faces were given");
         let mincho = store.abbrev_key("ipaexm").expect("ipaexm must resolve");

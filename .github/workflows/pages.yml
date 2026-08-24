@@ -121,6 +121,16 @@ jobs:
           # Article 2 Paragraph 5 covers that.)
           cp rustyfi/lib-rustyfi/dist/fonts/ipaexg.ttf _site/fonts/
           cp rustyfi/lib-rustyfi/dist/fonts/IPA_Font_License_Agreement_v1.0.txt _site/fonts/
+          # Latin Modern Math, and the reason it is not optional: a text face
+          # has no `MATH` table, so without this `Context::math_font` falls back
+          # to Junicode and every equation lays out against constants that are
+          # not there — limits on top of their operator, no fraction bar, fences
+          # that do not stretch. It renders, and it is wrong.
+          #
+          # GUST Font License (an LPPL-1.3c equivalent) requires the licence to
+          # travel with the font, the same as the two above.
+          cp rustyfi/lib-rustyfi/dist/fonts/latinmodern-math.otf _site/fonts/
+          cp rustyfi/lib-rustyfi/dist/fonts/LICENSE-GUST-FontLicense.txt _site/fonts/
           # The module bakes in third-party SATySFi packages, so their licence
           # texts have to travel with the site the same way the font's does.
           # Each package's own file is committed here; the LGPL/GPL pair comes
