@@ -329,9 +329,10 @@ These are properties of a browser build, not of the typesetter:
   shows. The visible cost is that section headings no longer differ from the
   body.
 
-  You can still supply your own with the picker, and it then replaces **both** —
-  a face of yours is used for every script, which is what that control has
-  always done. **Whatever you pick is read in the tab and is never uploaded.**
+  Both faces are served from this origin beside the module. **Nothing is
+  uploaded and nothing is fetched from another origin** — the Japanese face is
+  simply requested late, on the first document that needs it, because it is
+  5.8 MB and most documents do not.
 - **`@require:` resolves against fixed bundled corpora only** — the frozen
   SATySFi 0.0.6 standard library, a licence-cleared subset of rustyfi's
   layout-test corpus, and the SATySFi 0.1 standard library, all from the

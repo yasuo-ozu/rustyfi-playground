@@ -418,12 +418,9 @@ let cjkBytes = null;
 /// Set once a CJK fetch has failed, so a document full of Japanese does not
 /// re-download five megabytes on every keystroke-triggered typeset.
 let cjkFailed = false;
-/// True once the visitor supplies their own face. It then fills BOTH roles,
-/// which is what the file picker has always promised ("unlocks non-Latin
-/// text") and what it already did — before this, EVERY abbrev fell through to
-/// the single uploaded face. Keeping that means an uploaded Japanese font
-/// still sets Japanese, and it is why the bundled face is not fetched over the
-/// top of one.
+/// The object URL backing the preview iframe and the download link. Revoked
+/// and reissued on every render, so a long session does not retain every PDF
+/// it has produced.
 let blobUrl = null;
 
 /// The editor, once it exists.
@@ -761,7 +758,7 @@ function loadCjkFont() {
       cjkBytes = new Uint8Array(await res.arrayBuffer());
       const mb = ((fontBytes?.length ?? 0) + cjkBytes.length) / 1024 / 1024;
       $("fontlabel").textContent =
-        `Font: Junicode + IPAexGothic (bundled, ${mb.toFixed(1)} MB) — or pick your own…`;
+        `Font: Junicode + IPAexGothic (bundled, ${mb.toFixed(1)} MB)`;
       return true;
     } catch (e) {
       cjkFailed = true;
