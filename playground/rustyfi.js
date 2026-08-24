@@ -56,16 +56,48 @@ function wrap(instance) {
     /// `lang` is `0` for SATySFi 0.0.6 (the default) and `1` for 0.1. Exactly
     /// one corpus is mounted per call, so a 0.1 document resolves `@require:`
     /// against the 0.1 packages and never silently against a 0.0.6 one.
-    compile(source, font, lang = 0) {
+    ///
+    /// `cjkFont` is a SECOND face, and it is not interchangeable with the
+    /// first: `font` fills the three style slots (regular/bold/oblique), while
+    /// `cjkFont` is registered under the abbrevs a document names — `ipaexm`
+    /// and `ipaexg`, which is what `stdja` and friends ask for. Without it a
+    /// `set-font HanIdeographic` naming one of those resolves onto the Latin
+    /// face and the document typesets `.notdef` WITHOUT failing, so leaving it
+    /// out for a Japanese document is a silent wrong answer, not an error.
+    compile(source, font, lang = 0, cjkFont = null) {
+      return this.render(ex.rustyfi_compile_with_fonts_lang, source, font, lang, cjkFont, "pdf");
+    },
+
+    /// Compile SATySFi source to a self-contained HTML page. Same inputs and
+    /// same failure handling as `compile`; returns `{ ok: true, html }` or
+    /// `{ ok: false, error }`.
+    ///
+    /// The font matters here for a reason of its own: the reflowable backend
+    /// NAMES faces rather than embedding them, and the family name is also
+    /// what tells it a run is fixed-pitch — the only signal separating a
+    /// `+code` block from a wrapped paragraph. `cjkFont` puts `IPAexGothic` at
+    /// the head of a Japanese run's family stack for the same reason.
+    compileHtml(source, font, lang = 0, cjkFont = null) {
+      return this.render(ex.rustyfi_compile_html_fonts, source, font, lang, cjkFont, "html");
+    },
+
+    /// The shared body of the two above: push the source and both faces, call,
+    /// and turn the `Output` into `{ ok, pdf | html }` or `{ ok: false, error }`.
+    ///
+    /// `field` names the successful payload, which is the only difference
+    /// between them — one returns bytes, the other decodes them as UTF-8.
+    render(fn, source, font, lang, cjkFont, field) {
       const src = new TextEncoder().encode(source);
-      let srcPtr = 0, srcLen = 0, fontPtr = 0, fontLen = 0;
+      let srcPtr = 0, srcLen = 0, fontPtr = 0, fontLen = 0, cjkPtr = 0, cjkLen = 0;
       try {
         [srcPtr, srcLen] = push(src);
         [fontPtr, fontLen] = push(font);
+        [cjkPtr, cjkLen] = push(cjkFont);
         const { ok, bytes } = take(
-          ex.rustyfi_compile_with_font_lang(srcPtr, srcLen, fontPtr, fontLen, lang),
+          fn(srcPtr, srcLen, fontPtr, fontLen, cjkPtr, cjkLen, lang),
         );
-        return ok ? { ok: true, pdf: bytes } : { ok: false, error: text(bytes) };
+        if (!ok) return { ok: false, error: text(bytes) };
+        return { ok: true, [field]: field === "html" ? text(bytes) : bytes };
       } catch (e) {
         trapped = true;
         return {
@@ -79,42 +111,9 @@ function wrap(instance) {
       } finally {
         if (srcPtr !== 0) ex.rustyfi_dealloc(srcPtr, srcLen);
         if (fontPtr !== 0) ex.rustyfi_dealloc(fontPtr, fontLen);
+        if (cjkPtr !== 0) ex.rustyfi_dealloc(cjkPtr, cjkLen);
       }
     },
-
-      /// Compile SATySFi source to a self-contained HTML page. Same inputs
-      /// and same failure handling as `compile`; returns `{ ok: true, html }`
-      /// or `{ ok: false, error }`.
-      ///
-      /// The font matters here for a reason of its own: the reflowable backend
-      /// NAMES faces rather than embedding them, and the family name is also
-      /// what tells it a run is fixed-pitch — the only signal separating a
-      /// `+code` block from a wrapped paragraph.
-      compileHtml(source, font, lang = 0) {
-        const src = new TextEncoder().encode(source);
-        let srcPtr = 0, srcLen = 0, fontPtr = 0, fontLen = 0;
-        try {
-          [srcPtr, srcLen] = push(src);
-          [fontPtr, fontLen] = push(font);
-          const { ok, bytes } = take(
-            ex.rustyfi_compile_html(srcPtr, srcLen, fontPtr, fontLen, lang),
-          );
-          return ok ? { ok: true, html: text(bytes) } : { ok: false, error: text(bytes) };
-        } catch (e) {
-          trapped = true;
-          return {
-            ok: false,
-            error:
-              `the WebAssembly module trapped: ${e && e.message ? e.message : e}\n\n` +
-              "This usually means the document was too deeply nested for the " +
-              "module's stack. Reload the page to get a fresh module.",
-            trapped: true,
-          };
-        } finally {
-          if (srcPtr !== 0) ex.rustyfi_dealloc(srcPtr, srcLen);
-          if (fontPtr !== 0) ex.rustyfi_dealloc(fontPtr, fontLen);
-        }
-      },
 
     /// Analyse SATySFi source without typesetting it, for live editor
     /// diagnostics. Returns `{ ok: true, diagnostics: [...] }`, where each
