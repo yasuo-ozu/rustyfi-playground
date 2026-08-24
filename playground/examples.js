@@ -312,6 +312,59 @@ document (|
 `,
   },
   {
+    name: "Floating figures (stdjareport)",
+    needsFont: true,
+    source: `% A stdjareport \\figure does NOT sit where you write it. The class registers
+% it on the page it appears on and emits it at the top of a LATER page, out of
+% the page-parts callback — so the document has to be long enough to have a
+% later page, which is what the filler below is for. Scroll to page 2.
+%
+% Until rustyfi 0.1.4 this rendered NOTHING, in PDF or anywhere else: the port
+% fired page-break hooks after the whole page loop had finished, so the float
+% list was always empty by the time a header was built. Upstream interleaves
+% them per page.
+%
+% Switch Output to HTML and the figure disappears again — that one is honest,
+% not a regression. A continuous web document has no "top of the next page" to
+% float to, and the reflowable backend reads the block stream from BEFORE page
+% breaking, where a \\figure contributes nothing at all. Where such a figure
+% should land in a pageless document is still an open question.
+
+@require: stdjareport
+@require: color
+
+let-inline ctx \\bars =
+  let w = 60pt in let h = 18pt in
+  inline-graphics w h 0pt (fun (x, y) -> (
+    [0; 1; 2; 3; 4] |> List.map (fun i -> (
+      let fi = float i in
+      let bx = x +' w *' (0.02 +. fi *. 0.2) in
+      fill (Color.gray (0.75 -. fi *. 0.12))
+        (Gr.rectangle (bx, y) (bx +' w *' 0.14, y +' h *' (0.25 +. fi *. 0.18)))
+    ))
+  ))
+
+let-block ctx +center it =
+  line-break true true ctx (inline-fil ++ read-inline ctx it ++ inline-fil)
+
+let filler = {A floating figure is page furniture: the class registers it on the
+page where you write it, and emits it at the top of a later one. So a document
+has to be long enough to have a later page, or the figure has nowhere to go.}
+in
+
+document (| title = {Floating figures}; author = {rustyfi}; |) '<
+  +chapter {Registered here, printed overleaf} <
+    +p {
+      \\figure ?:(\`f1\`) {A bar chart} < +center { \\bars; } >
+      is registered in this paragraph and appears at the top of the next page.
+    }
+    +p { #filler; } +p { #filler; } +p { #filler; } +p { #filler; }
+    +p { #filler; } +p { #filler; } +p { #filler; } +p { #filler; }
+  >
+>
+`,
+  },
+  {
     name: "Figures (figbox)",
     needsFont: false,
     source: `% Adapted from figbox's own manual, layout-tests/corpus/figbox/doc/manual.saty.
