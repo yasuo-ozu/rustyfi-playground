@@ -271,6 +271,13 @@
   }
   .mdt:hover { color: var(--ink); }
   .mdt.sel { border-color: var(--ink); color: var(--ink); font-weight: 600; }
+  /* `Source` is a toggle, not one of a set, so it is separated from the three
+     mutually-exclusive theme buttons. */
+  .mdt.src { margin-left: 0.45rem; }
+  /* The theme only applies to the RENDERING. With the source showing, the
+     three buttons still hold the choice you will get back, so they are dimmed
+     rather than hidden — removing them would make the row jump. */
+  .mdtheme.showing-source .mdt[data-theme] { opacity: 0.35; }
   /* The Markdown source: on this page, not in the frame, because it is what
      you would copy. Wraps rather than scrolls horizontally — a drawing's
      `<svg>` is one very long line, and a horizontal scrollbar for it would
@@ -392,14 +399,14 @@
             title="One continuous, self-contained web document — no pages, and the browser does the line breaking.">HTML</button>
           <button class="fmt" data-fmt="markdown" role="tab" aria-selected="false"
             title="The Markdown, rendered — what a reader of the file would see.">Markdown</button>
-          <button class="fmt" data-fmt="markdown-src" role="tab" aria-selected="false"
-            title="The Markdown itself, as the file would be written.">Markdown Source</button>
         </span>
-        <span class="mdtheme" id="mdtheme" role="group" aria-label="Markdown preview theme">
+        <span class="mdtheme" id="mdtheme" role="group" aria-label="Markdown preview">
           <button class="mdt sel" data-theme="auto"
             title="Follow your system's light/dark setting, which is what a reader of this file would get.">Auto</button>
           <button class="mdt" data-theme="light" title="Force the light rendering.">Light</button>
           <button class="mdt" data-theme="dark" title="Force the dark rendering.">Dark</button>
+          <button class="mdt src" id="mdsrc" aria-pressed="false"
+            title="Show the Markdown itself, as the file would be written, instead of the rendering.">Source</button>
         </span>
         <span id="dl"></span>
       </h2>
@@ -443,6 +450,14 @@ const previewEl = $("preview");
 /// formats sit above the preview, where what you are looking at is named by
 /// the control that chose it.
 let format = "pdf";
+
+/// Whether the Markdown tab shows its SOURCE rather than its rendering.
+///
+/// A view of one result, not a fourth output format — which is what it was
+/// when it had its own tab. Both presentations come from the SAME compile, so
+/// a tab made switching cost a typeset and read as a format choice. It sits
+/// with the other controls over how the Markdown is PRESENTED.
+let mdSource = false;
 
 /// The rendered-Markdown preview's colour scheme: "auto" (follow the reader's
 /// system, which is what a reader of the file would get), "light" or "dark".
@@ -979,6 +994,14 @@ img, svg { max-width: 100%; height: auto; }
 /// the difference is a visible stall.
 let lastMarkdown = null;
 
+/// Show the Markdown result in whichever presentation is selected. Both
+/// remember `md`, so switching re-presents the same bytes rather than starting
+/// a fresh typeset.
+function showMarkdownAs(md) {
+  if (mdSource) showMarkdownSource(md);
+  else showMarkdown(md);
+}
+
 function showMarkdown(md) {
   lastMarkdown = md;
   const page =
@@ -1001,6 +1024,7 @@ function showMarkdown(md) {
 /// The Markdown ITSELF. Text on this page, not a document in the frame — it is
 /// what you would copy.
 function showMarkdownSource(md) {
+  lastMarkdown = md;
   sourceEl.textContent = md;
   showPane("source");
   offerDownload(md, "document.md", "text/markdown;charset=utf-8");
@@ -1022,15 +1046,28 @@ function offerDownload(data, name, type) {
   $("dl").append("— ", a);
 }
 
-document.querySelectorAll(".mdt").forEach((b) => {
+$("mdsrc").addEventListener("click", () => {
+  mdSource = !mdSource;
+  $("mdsrc").classList.toggle("sel", mdSource);
+  $("mdsrc").setAttribute("aria-pressed", String(mdSource));
+  // The light/dark buttons only mean anything for the RENDERING.
+  $("mdtheme").classList.toggle("showing-source", mdSource);
+  if (lastMarkdown !== null && format === "markdown") showMarkdownAs(lastMarkdown);
+});
+
+document.querySelectorAll(".mdt[data-theme]").forEach((b) => {
   b.addEventListener("click", () => {
     if (b.dataset.theme === mdTheme) return;
     mdTheme = b.dataset.theme;
-    document.querySelectorAll(".mdt").forEach((x) => x.classList.toggle("sel", x === b));
+    document.querySelectorAll(".mdt[data-theme]").forEach((x) =>
+      x.classList.toggle("sel", x === b),
+    );
     // Re-render what is already there. No compile: the Markdown does not
     // depend on the colour scheme, and re-running the typesetter to recolour a
     // preview would be a visible stall on a large document.
-    if (lastMarkdown !== null && format === "markdown") showMarkdown(lastMarkdown);
+    if (lastMarkdown !== null && format === "markdown" && !mdSource) {
+      showMarkdown(lastMarkdown);
+    }
   });
 });
 
@@ -1093,10 +1130,7 @@ async function typeset() {
 function renderOnce() {
   const started = performance.now();
   const fmt = currentFormat();
-  // Both Markdown tabs are the SAME compile — one renders its result, the
-  // other shows it — so switching between them costs a typeset but never a
-  // different answer.
-  const markdown = fmt === "markdown" || fmt === "markdown-src";
+  const markdown = fmt === "markdown";
   const result =
     fmt === "html"
       ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes)
@@ -1108,10 +1142,9 @@ function renderOnce() {
     const payload = fmt === "html" ? result.html : markdown ? result.markdown : result.pdf;
     const size = fmt === "pdf" ? payload.length : new TextEncoder().encode(payload).length;
     if (fmt === "html") showHtml(payload);
-    else if (fmt === "markdown") showMarkdown(payload);
-    else if (fmt === "markdown-src") showMarkdownSource(payload);
+    else if (fmt === "markdown") showMarkdownAs(payload);
     else showPdf(payload);
-    const LABEL = { pdf: "PDF", html: "HTML", markdown: "Markdown", "markdown-src": "Markdown" };
+    const LABEL = { pdf: "PDF", html: "HTML", markdown: "Markdown" };
     statusEl.className = "ok";
     statusEl.textContent = `typeset in ${ms} ms — ${(size / 1024).toFixed(1)} kB ${LABEL[fmt]}`;
   } else {

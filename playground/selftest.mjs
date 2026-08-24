@@ -1441,8 +1441,16 @@ StdJa.document (| title = {t}; author = {a} |) '<
   // The format dropdown is gone; the four tabs replace it. A stale `#format`
   // would mean `currentFormat()` reads a control nothing updates.
   check("the output format is chosen by tabs, not a dropdown",
-    !/id="format"/.test(page) && (page.match(/class="fmt[ "]/g) ?? []).length === 4,
+    !/id="format"/.test(page) && (page.match(/class="fmt[ "]/g) ?? []).length === 3,
     `${(page.match(/class="fmt[ "]/g) ?? []).length} tabs, dropdown ${/id="format"/.test(page)}`);
+  // Source is a PRESENTATION of the Markdown result, not a fourth format: both
+  // come from one compile, so a tab made switching cost a typeset.
+  check("Markdown source is a toggle beside the theme buttons, not a tab",
+    /id="mdsrc"/.test(page) && !/data-fmt="markdown-src"/.test(page),
+    "the Markdown Source tab is still a format");
+  check("the theme buttons dim while the source is showing",
+    /\.mdtheme\.showing-source/.test(page),
+    "nothing tells the reader the light/dark choice does not apply to source");
   check("the header no longer names a font", !/id="fontlabel"/.test(page));
 
   // The Markdown preview's light/dark toggle. The frame is standing in for
