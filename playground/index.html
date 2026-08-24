@@ -1007,19 +1007,28 @@ const KATEX_SRI = {
 /// output does at a reader.
 function katexHead() {
   if (mathMode !== 4) return "";
+  const delims =
+    "[{left:'$$',right:'$$',display:true}," +
+    "{left:'\\\\[',right:'\\\\]',display:true}," +
+    "{left:'$',right:'$',display:false}," +
+    "{left:'\\\\(',right:'\\\\)',display:false}]";
   return (
     `<link rel="stylesheet" href="${KATEX_BASE}/katex.min.css"` +
     ` integrity="${KATEX_SRI.css}" crossorigin="anonymous">` +
     `<script defer src="${KATEX_BASE}/katex.min.js"` +
     ` integrity="${KATEX_SRI.js}" crossorigin="anonymous"><\/script>` +
     `<script defer src="${KATEX_BASE}/contrib/auto-render.min.js"` +
-    ` integrity="${KATEX_SRI.auto}" crossorigin="anonymous"` +
-    ` onload="renderMathInElement(document.body,{ignoredClasses:['nomath'],delimiters:[` +
-    `{left:'$$',right:'$$',display:true},` +
-    `{left:'\\[',right:'\\]',display:true},` +
-    `{left:'$',right:'$',display:false},` +
-    `{left:'\\(',right:'\\)',display:false}` +
-    `],throwOnError:false})"><\/script>`
+    ` integrity="${KATEX_SRI.auto}" crossorigin="anonymous"><\/script>` +
+    // Not the scripts' own `onload`: measured, that fires in the Markdown
+    // frame and NOT in the HTML one, leaving every equation as raw `\(…\)`
+    // while `renderMathInElement` sat there defined and working — calling it
+    // by hand turned 0 rendered equations into 17. `DOMContentLoaded` is
+    // KaTeX's own documented hook and is ordered by the spec rather than by
+    // resource timing: a deferred script always executes before it fires, so
+    // the function is guaranteed to exist.
+    `<script>document.addEventListener("DOMContentLoaded",function(){` +
+    `renderMathInElement(document.body,{ignoredClasses:['nomath'],` +
+    `delimiters:${delims},throwOnError:false});});<\/script>`
   );
 }
 

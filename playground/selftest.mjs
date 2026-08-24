@@ -1477,6 +1477,19 @@ StdJa.document (| title = {t}; author = {a} |) '<
     !usesKatex || /function protectMath/.test(page),
     "emphasis inside $…$ would destroy the LaTeX before KaTeX sees it",
   );
+  // Rendering must be hooked on DOMContentLoaded, not the scripts' own
+  // `onload`. Measured: `onload` fired in the Markdown frame and NOT in the
+  // HTML one, so every equation stayed raw `\(…\)` while
+  // `renderMathInElement` sat there defined — calling it by hand took 0
+  // rendered equations to 17. DOMContentLoaded is ordered by the spec (a
+  // deferred script always executes before it fires) rather than by resource
+  // timing, so it cannot vary between two documents.
+  check(
+    "KaTeX rendering is hooked on DOMContentLoaded, not script onload",
+    !usesKatex ||
+      (/DOMContentLoaded/.test(page) && !/onload=\\"renderMathInElement/.test(page)),
+    "script onload does not fire reliably in both preview frames",
+  );
   check(
     "KaTeX is only fetched when a KaTeX mode is chosen",
     katexUrls.length === 0 || /mathMode !== 4\) return ""/.test(page),
