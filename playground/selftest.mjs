@@ -14,7 +14,9 @@ import zlib from "node:zlib";
 import { instantiate } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
 import { decodeSource, encodeSource, shareLang, shareUrl, SHORTENERS } from "./share.js";
-import { PACKAGE_SETS, PACKAGE_SETS_V01, FONTS, groupPackages, setsFor } from "./packages.js";
+import {
+  PACKAGE_SETS, PACKAGE_SETS_V01, FONTS, groupPackages, setFor, setsFor,
+} from "./packages.js";
 
 const wasmPath = process.argv[2];
 if (!wasmPath) {
@@ -140,6 +142,37 @@ check("stdjabook is bundled", packages.includes("stdjabook"), packages.join(", "
       text !== null && text.length > 500,
       `${licenseName} is missing from ${found.dir}, which is serving ${font.file}`,
     );
+  }
+
+  // 1d. …and every package set is actually USED by an example.
+  //
+  //     This is the third leg of the same obligation. Bundling a third-party
+  //     package puts its source on a public site under someone else's licence;
+  //     doing that for a package nothing on the page demonstrates is carrying
+  //     the obligation for nothing. It is also the failure mode that merging
+  //     examples invites: fold two together carelessly and the only user of
+  //     some package quietly disappears, with nothing else noticing.
+  //
+  //     Keyed on the SET rather than on individual names, because a set is
+  //     what a licence attaches to — `easytable/matrix` going unused is a
+  //     documentation gap, `easytable` going unused is a licence with no
+  //     reason to be here.
+  {
+    const required = new Set();
+    for (const example of EXAMPLES) {
+      const lang = example.lang ?? 0;
+      for (const m of example.source.matchAll(/^@require:[ \t]*(\S+)/gm)) {
+        // A require resolves against the asking file's own generation first
+        // and falls back to the other, so a name is claimed by whichever
+        // table has it — which is what makes the cross-version examples count
+        // towards both corpora rather than neither.
+        required.add(setFor(m[1], lang) ?? setFor(m[1], lang === 1 ? 0 : 1));
+      }
+    }
+    for (const set of [...PACKAGE_SETS, ...PACKAGE_SETS_V01]) {
+      check(`${set.name}: at least one example uses it`, required.has(set),
+        "bundled, attributed, and demonstrated nowhere");
+    }
   }
 
   for (const { set, members } of groups) {
@@ -489,6 +522,13 @@ check(
 //    0.0.6). Compiling everything as 0.0.6 — which is what this loop used to
 //    do — would fail every 0.1 example on a parse error, and, worse, a 0.1
 //    example that regressed into being valid 0.0.6 would pass silently.
+//
+//    The floor a rendered example has to clear. `HELLO` above is one short
+//    paragraph and comes to about 1.2 kB; every example ships several pages
+//    of content, and the smallest is over 5 kB, so this catches a document
+//    whose body stopped being rendered without catching a legitimately small
+//    one.
+const PDF_FLOOR = 2000;
 for (const example of EXAMPLES) {
   const lang = example.lang ?? 0;
   const out = rustyfi.compile(example.source, null, lang);
@@ -537,7 +577,14 @@ for (const example of EXAMPLES) {
           `only ${drawn.size} distinct CJK codepoints in the PDF`,
         );
       }
-      if (withFont.ok) console.log(`     ${withFont.pdf.length} bytes of PDF (with a font)`);
+      if (withFont.ok) {
+        console.log(`     ${withFont.pdf.length} bytes of PDF (with a font)`);
+        check(
+          `example "${example.name}" renders a document, not an empty page`,
+          withFont.pdf.length > PDF_FLOOR,
+          `${withFont.pdf.length} bytes`,
+        );
+      }
     }
   } else {
     check(
@@ -545,7 +592,73 @@ for (const example of EXAMPLES) {
       out.ok,
       out.ok ? "" : out.error.split("\n")[0],
     );
-    if (out.ok) console.log(`     ${out.pdf.length} bytes of PDF`);
+    if (out.ok) {
+      console.log(`     ${out.pdf.length} bytes of PDF`);
+      // An example that compiles to a nearly empty PDF has stopped teaching
+      // whatever it was for. These are multi-feature documents now — the
+      // smallest is several kilobytes — so a floor well under the smallest
+      // one still catches a body that silently stopped being rendered.
+      check(
+        `example "${example.name}" renders a document, not an empty page`,
+        out.pdf.length > PDF_FLOOR,
+        `${out.pdf.length} bytes`,
+      );
+      // …and SUPPLYING a font must not break a document that did not need
+      // one. Every metric in the document changes when the face does, so a
+      // layout that only holds together under base-14 — an alignment, a
+      // fixed-width figbox — would fail here and nowhere else.
+      if (fontBytes !== null) {
+        const withFont = rustyfi.compile(example.source, fontBytes, lang);
+        check(
+          `example "${example.name}" still compiles with a font supplied`,
+          withFont.ok,
+          withFont.ok ? "" : withFont.error.split("\n")[0],
+        );
+      }
+    }
+  }
+}
+
+// 8b. THE OTHER OUTPUT MODE, on every example. Section 5b pins the HTML
+//     writer's properties on one hand-written document; this runs the whole
+//     shipped corpus through it, because the page offers the mode for all of
+//     them and the writer's hard cases — math drawn from a font outline, a
+//     table, a figure, a slide deck — only appear in the examples.
+//
+//     The self-containment check is per example rather than once, since that
+//     is exactly the kind of thing one construct could break: a raster image
+//     or a font emitted as a URL would reach off-origin from the one document
+//     that used it and nowhere else.
+for (const example of EXAMPLES) {
+  const lang = example.lang ?? 0;
+  const page = rustyfi.compileHtml(
+    example.source,
+    example.needsFont ? fontBytes : null,
+    lang,
+    example.needsCjk ? cjkFontBytes : null,
+  );
+  if (example.refuses) {
+    check(
+      `example "${example.name}" is refused in HTML mode too`,
+      !page.ok,
+      "it compiled; a refusal must not depend on the output format",
+    );
+    continue;
+  }
+  if (example.needsFont && fontBytes === null) continue;
+  check(
+    `example "${example.name}" renders as HTML`,
+    page.ok,
+    page.ok ? "" : page.error.split("\n")[0],
+  );
+  if (page.ok) {
+    check(
+      `example "${example.name}" renders HTML that fetches nothing`,
+      page.html.startsWith("<!doctype html>") &&
+        !page.html.includes("<script") &&
+        !/(?:src|href)="https?:/.test(page.html),
+      "the page reaches off-origin, or is not a document",
+    );
   }
 }
 
@@ -564,6 +677,23 @@ for (const example of EXAMPLES) {
       `example "${example.name}" is really 0.1-only`,
       !wrong.ok,
       "it compiled as 0.0.6 too, so `lang` is not selecting anything",
+    );
+  }
+  // And the mirror, which was missing: a 0.0.6 example must fail as 0.1. The
+  // omitted `lang` is a real claim about the source, not merely a default, and
+  // an example that satisfied BOTH grammars would make the Lang selector look
+  // decorative on the very document a reader tried it on. Every generation
+  // difference the examples rely on — `;` between record fields, `let-rec`,
+  // `open M in` without the `let` — is a parse error on the other side, so
+  // this holds for a reason rather than by accident.
+  const v006 = EXAMPLES.filter((e) => (e.lang ?? 0) === 0);
+  check("the page ships 0.0.6 examples", v006.length > 0, "no example is 0.0.6");
+  for (const example of v006) {
+    const wrong = rustyfi.compile(example.source, fontBytes, 1);
+    check(
+      `example "${example.name}" is really 0.0.6-only`,
+      !wrong.ok,
+      "it compiled as 0.1 too, so `lang` is not selecting anything",
     );
   }
 }
@@ -897,13 +1027,36 @@ document (|title = {t}; author = {a};|) '<
     }
   }
 
-  // The REVERSE crossing, which no example ships but which mounting both
-  // corpora also makes reachable — and which needed a third compile arm
-  // (`compile_document_v006_xver_with_aux`), since `merge_program` cannot
-  // take a `FileV1`. Untested, that arm would be a panic waiting for the
-  // first person who tried it.
+  // THE REVERSE CROSSING — a 0.0.6 document reaching into the 0.1 corpus —
+  // which needed a third compile arm (`compile_document_v006_xver_with_aux`),
+  // since `merge_program` cannot take a `FileV1`. Untested, that arm would be
+  // a panic waiting for the first person who tried it.
+  //
+  // The page ships an example for this direction too, and it gets the same
+  // non-vacuity treatment as the forward ones: the names it requires must be
+  // absent from the 0.0.6 corpus, or a same-generation resolution could be
+  // satisfying them.
+  const only01 = (name) => v01.has(name) && !v006.has(name);
+  const reversing = EXAMPLES.filter(
+    (e) => (e.lang ?? 0) === 0 && requiresOf(e.source).some(only01),
+  );
+  check("the page ships a reverse cross-version example", reversing.length > 0,
+    "no 0.0.6 example requires a 0.1-only package");
+  for (const example of reversing) {
+    const foreign = requiresOf(example.source).filter(only01);
+    check(
+      `"${example.name}" requires ${foreign.join(", ")}, which the 0.0.6 corpus does not have`,
+      foreign.every((n) => !v006.has(n)),
+      foreign.join(", "),
+    );
+    const out = rustyfi.compile(example.source, fontBytes, 0);
+    check(`"${example.name}" really crosses the version boundary`, out.ok,
+      out.ok ? "" : out.error.split("\n")[0]);
+  }
+  // …and the hand-written fixture stays, minimal and independent of whatever
+  // the shipped example happens to do this month.
   {
-    check("`int` is a 0.1-only package", v01.has("int") && !v006.has("int"),
+    check("`int` is a 0.1-only package", only01("int"),
       "the fixture must be absent from the 0.0.6 corpus, or this proves nothing");
     const reverse = "@require: stdja-mini\n@require: int\n" +
       "let n = Int.max 3 9 in\nlet s = embed-string (arabic n) in\n" +
@@ -1137,7 +1290,18 @@ StdJa.document (| title = {t}; author = {a} |) '<
         while (line + 1 < lineStart.length && lineStart[line + 1] <= abs) line++;
         return [line, abs - lineStart[line]];
       };
-      rustyfi.index(text, lang);
+      // The index is a SEPARATE resolution of the same `@require:` graph from
+      // the one the compiler does — no elaboration, no typecheck, just enough
+      // to answer hover and completion out of a detached buffer. So an
+      // example whose packages the compiler finds and the index does not is a
+      // real bug, and one that would surface as the editor silently knowing
+      // nothing about half the commands in it.
+      const index = rustyfi.index(text, lang);
+      check(
+        `example "${example.name}": the editor's index resolves its packages`,
+        index.unresolved.length === 0 && index.names > 0,
+        JSON.stringify({ unresolved: index.unresolved, names: index.names }),
+      );
       for (const m of text.matchAll(/[\\+][A-Za-z][A-Za-z0-9-]*/g)) {
         sites++;
         const [l, c] = lc(m.index + 1);
