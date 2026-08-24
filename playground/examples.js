@@ -5,11 +5,28 @@
 // example that does not typeset is worse than no example at all, and this is
 // the only way to know without opening a browser.
 //
+// THERE ARE DELIBERATELY FEW OF THEM, AND EACH ONE DOES SEVERAL THINGS. A
+// page of single-feature snippets says nothing about how the features behave
+// together, which is the only way anybody meets them; these are shaped like
+// documents somebody would actually write, and the commentary at the top of
+// each says what to look for. Where two packages appear in one example it is
+// because they compose there, not to save a slot.
+//
+// One practical ceiling shapes how far that can go. Elaboration and
+// typechecking recurse over the MERGED program — the document plus every
+// package it `@require:`s — and wasm frames consume the embedder's native
+// stack, which is under a megabyte in both node and a browser. Some packages
+// are much deeper than others (`latexcmds` and `math` most of all), so a
+// merge is limited by the depth of what it pulls in rather than by the count.
+// An example that traps with `Maximum call stack size exceeded` has hit that,
+// not a bug in the document.
+//
 // `needsFont` marks the ones that cannot work under the base-14 fonts: the
-// `stdja` family renders page furniture containing an em dash, and the two
-// equation examples use symbols outside WinAnsi. Those are expected to FAIL
-// without a font and to succeed with one, and the self-test checks both
-// directions.
+// `stdja` family renders page furniture containing an em dash, and the math
+// examples use symbols outside WinAnsi. Those are expected to FAIL without a
+// font and to succeed with one, and the self-test checks both directions. The
+// page itself always has a face, so on screen these simply work; the label is
+// about what the compiler does when it does not.
 //
 // `needsCjk` marks the ones that additionally need the JAPANESE face, and it
 // is a stronger claim than `needsFont`: an example that needs a font FAILS
@@ -21,12 +38,12 @@
 // be caught rather than staying quietly green.
 //
 // `lang` is the SATySFi generation the source is written in — `0` for 0.0.6
-// and `1` for 0.1 — and is OMITTED wherever it is 0, which is the default and
-// what every example here predates. It is not decoration: the two generations
-// have different grammars and different bundled corpora, so compiling an entry
-// under the wrong one is a parse error rather than a subtly different render.
-// Choosing an example sets the header's Lang selector from this field; the
-// self-test compiles each entry under it.
+// and `1` for 0.1 — and is OMITTED wherever it is 0, which is the default. It
+// is not decoration: the two generations have different grammars and different
+// bundled corpora, so compiling an entry under the wrong one is a parse error
+// rather than a subtly different render. Choosing an example sets the header's
+// Lang selector from this field; the self-test compiles each entry under it,
+// and separately checks that it FAILS under the other one.
 //
 // `refuses` is a regular expression, and marks an example that is EXPECTED
 // NOT TO COMPILE — the cross-version refusal at the end of the list, which
@@ -35,9 +52,10 @@
 // stricter than asserting a compile: a refusal that started saying something
 // else, or that quietly became a success, would both fail.
 //
-// Every example after "Inline code" exercises one bundled third-party package
-// and is adapted from that package's own documentation, cited at the top of
-// each source.
+// Between them these examples exercise every bundled third-party package, and
+// the self-test asserts that they do — a package redistributed here with no
+// example using it would be carrying a licence obligation for nothing. Each
+// example cites the upstream documentation it is adapted from.
 //
 // These are JS template literals, so a SATySFi backslash is written `\\`, a
 // backtick `` \` `` and a `${` `\${`. Getting that wrong is silent, which is
@@ -45,214 +63,547 @@
 
 export const EXAMPLES = [
   {
-    name: "Hello world",
+    name: "A first document",
     needsFont: false,
     source: `@require: stdja-mini
+@require: math
+@require: code
 
 document (|
   title = {A first document};
   author = {rustyfi};
 |) '<
   +p {
-    Hello from WebAssembly. This document was typeset in your browser,
-    by the same Rust code the command-line rustyfi runs.
+    Hello from WebAssembly. This document was typeset in your browser, by the
+    same Rust code the command-line rustyfi runs, and everything below is one
+    ordinary SATySFi document rather than a feature demonstration bolted
+    together.
+  }
+  +p {
+    Paragraphs are broken by a Knuth-Plass style line breaker, so this one is
+    set to fill its measure rather than simply wrapped at the right margin.
+    Add or remove a few words and watch the whole paragraph re-flow, not just
+    the last line.
+  }
+  +p {
+    Inline commands sit inside that flow: \\emph{emphasised text} is one, a
+    backtick literal such as \`let x = 1 in x + 1\` is set in the context's code
+    font, and inline math is written between \`\${\` and \`}\`, like \${1 + 2 = 3},
+    which is laid out by the math engine rather than typed as text.
+  }
+  +p {
+    Three \`@require:\` headers brought those in: \\emph{stdja-mini} for the
+    class and \`+p\`, \\emph{math} for the math, \\emph{code} for the backtick
+    literal. Open the Packages panel to see everything else that is bundled.
+  }
+  +p {
+    Most math symbols live outside WinAnsi, so anything past ASCII needs a
+    real font. This page loads one for you, named in the header above. Without
+    it the base-14 fallback refuses a character it cannot encode rather than
+    dropping it, which is why several of the examples below say they need a
+    font.
   }
 >
 `,
   },
   {
-    name: "Paragraphs and emphasis",
-    needsFont: false,
-    source: `@require: stdja-mini
-
-document (|
-  title = {Paragraphs};
-  author = {rustyfi};
-|) '<
-  +p {
-    SATySFi breaks paragraphs with a Knuth-Plass style line breaker, so this
-    paragraph is set to fill its measure rather than simply wrapped at the
-    right margin. Add or remove a few words and watch the whole paragraph
-    re-flow, not just the last line.
-  }
-  +p {
-    Inline commands work as usual: \\emph{emphasised text} sits inside an
-    ordinary paragraph.
-  }
->
-`,
-  },
-  {
-    name: "Math",
-    needsFont: false,
-    source: `@require: stdja-mini
-@require: math
-
-document (|
-  title = {Math};
-  author = {rustyfi};
-|) '<
-  +p {
-    Inline math is written between \`\${\` and \`}\`, like \${1 + 2 = 3},
-    and is set with the math layout engine rather than as plain text.
-  }
-  +p {
-    Note that most math symbols live outside WinAnsi, so anything beyond
-    ASCII needs a font supplied above.
-  }
->
-`,
-  },
-  {
-    name: "Displayed equations",
+    name: "Mathematics and proofs (math, base)",
     needsFont: true,
-    source: `@require: stdja-mini
-@require: math
-
-document (|
-  title = {Displayed equations};
-  author = {rustyfi};
-|) '<
-  +p {
-    \`+math\` sets an equation on its own line. Fractions nest, radicals grow to
-    fit what is under them, and \`\\paren\` stretches to its contents rather than
-    being a fixed-height glyph.
-  }
-  +math(\${
-    x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}
-  });
-  +p {
-    Big operators carry their limits above and below in display style:
-  }
-  +math(\${
-    \\sum_{k=1}^{n} k^2 = \\frac{n \\paren{n + 1} \\paren{2n + 1}}{6}
-  });
-  +math(\${
-    \\int_{0}^{\\infty} e^{-x^2} \\ordd x = \\frac{\\sqrt{\\pi}}{2}
-  });
-  +math(\${
-    \\lim_{n \\to \\infty} \\paren{1 + \\frac{1}{n}}^n = e
-  });
->
-`,
-  },
-  {
-    name: "Equation gallery",
-    needsFont: true,
-    source: `% Big operators are the part worth looking at. A display-size sum or
-% integral is a DIFFERENT GLYPH from the one its character maps to --
-% the font's MATH table supplies it as a variant, addressable only by
-% glyph id. An SVG <text> can name a character but not a glyph id, so
-% the HTML backend draws these from the font outline as a <path>.
-% Before that, they came out base-size with their limits hanging off
-% to one side, because the layout had been computed for the big glyph.
+    source: `% Mathematics, and the standard library that computes what goes into it.
+%
+% Big operators are the part worth looking at in HTML mode. A display-size
+% sum or integral is a DIFFERENT GLYPH from the one its character maps to --
+% the font's MATH table supplies it as a variant, addressable only by glyph
+% id. An SVG <text> can name a character but not a glyph id, so the HTML
+% backend draws these from the font outline as a <path>. Before that, they
+% came out base-size with their limits hanging off to one side, because the
+% layout had been computed for the big glyph.
 
 @require: stdja-mini
+@require: code
 @require: math
+@require: base/typeset/base
+@require: base/typeset/derive
+@require: base/inline
+@require: base/int
+@require: base/list-ext
+@require: base/string
 
-document (| title = {Equations}; author = {rustyfi}; |) '<
+open Derive
+
+% satysfi-base is a standard library: basic types, data structures, text
+% processing and extra typesetting. Six squares, computed here and read into
+% the document below with \`Inline.of-string\`.
+let squares =
+  List.iterate 6 (fun n -> n + 1) 0
+    |> List.map (fun n -> Int.to-string (n * n))
+    |> List.intersperse \`, \`
+    |> List.fold-left (^) \` \`
+
+in
+
+document (|
+  title = {Mathematics};
+  author = {rustyfi};
+|) '<
   +p {
-    Every equation here is set by the same compiler that produces the PDF, then
-    serialized as HTML. A glyph is text where a character names it, and an SVG
-    path drawn from the font outline where the MATH table supplies a display
-    variant that no character names — which is what makes the operators below
-    the right size with their limits centred.
+    Inline math is written between \`\${\` and \`}\`, like \${1 + 2 = 3}, and
+    \`+math\` sets an equation on its own line. Both go through the same layout
+    engine: a glyph is text where a character names it, and an SVG path drawn
+    from the font outline where the MATH table supplies a display variant that
+    no character names.
   }
 
-  +p { Big operators carry their limits: }
+  +p { Big operators carry their limits above and below in display style: }
   +math(\${ \\sum_{k=1}^{n} k^2 = \\frac{n \\paren{n + 1} \\paren{2n + 1}}{6} });
   +math(\${ \\int_{0}^{\\infty} e^{-x^2} \\ordd x = \\frac{\\sqrt{\\pi}}{2} });
   +math(\${ \\prod_{k=1}^{n} \\frac{k}{k + 1} = \\frac{1}{n + 1} });
 
-  +p { Fractions nest, radicals grow, and fences stretch to their contents: }
+  +p {
+    Fractions nest, radicals grow to fit what is under them, and fences
+    stretch to their contents rather than being fixed-height glyphs:
+  }
   +math(\${ x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a} });
   +math(\${ \\frac{1}{1 + \\frac{1}{1 + \\frac{1}{1 + \\frac{1}{2}}}} = \\frac{8}{13} });
-  +math(\${ \\sqrt{\\sqrt{\\sqrt{x}}} = x^{1/8} });
   +math(\${ \\abs{\\frac{a}{b}} \\leq \\norm{\\frac{a}{b}} \\leq \\ceil{\\frac{a}{b}} });
   +math(\${ \\lim_{n \\to \\infty} \\paren{1 + \\frac{1}{n}}^n = e });
 
   +p {
-    The bundled Junicode covers no Greek and no set-theory symbols, so this
-    example stays inside what it can draw. Supply a fuller face with the font
-    picker and Greek, quantifiers and set operators follow.
-  }
->
-`,
-  },
-  {
-    name: "Aligned equations",
-    needsFont: true,
-    source: `@require: stdja-mini
-@require: math
-
-document (|
-  title = {Aligned equations};
-  author = {rustyfi};
-|) '<
-  +p {
-    \`+align\` takes a list of rows, each a list of cells. The cells are aligned
-    on their column boundaries, which is how a derivation lines up on its
-    relation symbol.
+    \`+align\` takes a list of rows, each a list of cells, and aligns them on
+    their column boundaries. That is how a derivation lines up on its relation
+    symbol:
   }
   +align([
-    [\${\\paren{a + b}^2}; \${= a^2 + 2ab + b^2}];
-    [\${\\paren{a - b}^2}; \${= a^2 - 2ab + b^2}];
-    [\${\\paren{a + b}\\paren{a - b}}; \${= a^2 - b^2}];
+    [\${\\paren{a + b}^2};             \${= a^2 + 2ab + b^2}];
+    [\${\\paren{a - b}^2};             \${= a^2 - 2ab + b^2}];
+    [\${\\paren{a + b}\\paren{a - b}};  \${= a^2 - b^2}];
   ]);
+
   +p {
-    Nesting is unrestricted, so a fraction may contain a radical containing a
-    sum, and each level is set at the right script size:
+    Nesting is unrestricted, so a radical may contain a sum containing a
+    fraction, and every level is set at the right script size:
   }
-  +math(\${
-    \\sqrt{\\frac{1}{n} \\sum_{i=1}^{n} \\paren{x_i - \\mu}^2}
-  });
+  +math(\${ \\sqrt{\\frac{1}{n} \\sum_{i=1}^{n} \\paren{x_i - \\mu}^2} });
+
+  +p {
+    Numbers in the text can come from ordinary code. \\code(\`satysfi-base\`); is
+    a standard library, and its README opens with \\code(\`Inline.read\`);, which
+    turns inline text into boxes under whatever context you hand it. Six
+    squares, built with \\code(\`List.iterate\`);, \\code(\`List.map\`); and
+    \\code(\`List.intersperse\`); and read in with \\code(\`Inline.of-string\`);:
+    \\eval(Inline.of-string squares);
+  }
+  +p {
+    And \\code(\`base/typeset/derive\`); renders natural-deduction trees inside
+    math, so a proof is one more math expression:
+    \${\\proven!(
+      open DeriveDSL in
+      derive \${\\vdash A \\wedge B}
+      |> by {\${\\wedge} I}
+      |> from [
+        assume \${\\vdash A};
+        assume \${\\vdash B};
+      ]
+    )}
+  }
+  +p {
+    The Junicode this page loads covers no Greek and no set-theory symbols, so
+    this document stays inside what it can draw. Nothing in the compiler stops
+    at that boundary -- Greek, quantifiers and set operators are a matter of
+    the face, not the typesetter.
+  }
 >
 `,
   },
   {
-    name: "Inline code",
+    name: "Listings and tables (code-printer, easytable)",
     needsFont: false,
-    source: `@require: stdja-mini
+    source: `% A short technical note, of the kind these two packages exist for: source
+% listings that are highlighted, and a table that summarises them.
+%
+% Adapted from easytable's own manual (layout-tests/corpus/easytable/doc/
+% easytable.saty) and from code-printer's documented API.
+%
+% code-printer drives \`string-scan\`, a regexp primitive whose absence used to
+% stop the package loading at all. The colours are the theme's; the FOUR code
+% faces it also asks for are not bundled here, so keyword, identifier, string
+% and comment share one face. The highlighting is unaffected -- only the
+% typographic distinction between the four is.
+
+@require: stdja-mini
 @require: code
+@require: easytable/easytable
+@require: code-printer/code-printer
+@require: code-printer/code-theme
+@require: code-printer/code-syntax
+
+open EasyTableAlias
 
 document (|
-  title = {Code};
+  title = {Listings and tables};
   author = {rustyfi};
 |) '<
   +p {
-    A backtick literal such as \`let x = 1 in x + 1\` is set in the
-    context's code font.
+    The same program twice, in two languages and two themes. The syntax and
+    the theme are separate arguments, so any of the 38 bundled grammars pairs
+    with any of the 24 palettes.
+  }
+  +code-printer ?:(
+    CodePrinter.make-config CodeSyntax.rust CodeTheme.basic-light
+  )(\`fn main() {
+    // greet, twice
+    let greeting = "hello";
+    for i in 0..2 {
+        println!("{} {}", greeting, i);
+    }
+}\`);
+  +code-printer ?:(
+    CodePrinter.make-config CodeSyntax.ocaml CodeTheme.gruvbox-dark
+  )(\`let () =
+  (* greet, twice *)
+  let greeting = "hello" in
+  for i = 0 to 1 do
+    Printf.printf "%s %d\\n" greeting i
+  done\`);
+
+  +p {
+    A table's second argument is one flat inline text. Cell boundaries are the
+    vertical bars, so the table reads in the source the way it prints, and the
+    first argument gives one alignment per column:
+  }
+  +easytable[l; c; r]{
+    | package    | what it draws | licence
+    | easytable  | this table    | MIT
+    | code-printer | the listings above | MIT
+    | stdja-mini | the page around both | MIT
+    |}
+
+  +p {
+    Rules go in an optional argument before the alignments -- \\emph{t} and
+    \\emph{b} for the top and bottom, \\emph{m n} for one after row n -- and the
+    table above took the default, which is exactly \\emph{t, b, m 1}. Asking for
+    a rule after every row, and reversing the alignments, gives:
+  }
+  +easytable?:[t; b; m 1; m 2; m 3][r; c; l]{
+    | package    | what it draws | licence
+    | easytable  | this table    | MIT
+    | code-printer | the listings above | MIT
+    | stdja-mini | the page around both | MIT
+    |}
+
+  +p {
+    Both are ordinary block commands, so they interleave with paragraphs, and
+    with an inline literal such as \\code(\`CodeTheme.gruvbox-dark\`); in the
+    running text.
   }
 >
 `,
   },
   {
-    name: "Full stdja class (needs a font)",
-    needsFont: true,
-    source: `@require: stdja
+    name: "Lists and figures (enumitem, figbox)",
+    needsFont: false,
+    source: `% Two packages that build the body of a document rather than its page: lists
+% that nest, and figures that are assembled out of smaller boxes.
+%
+% Adapted from each package's own manual --
+%   layout-tests/corpus/enumitem/doc/enumitem.saty
+%   layout-tests/corpus/figbox/doc/manual.saty
 
-% The stdja family renders its own title block and page furniture with
-% characters outside WinAnsi, so this example needs a font supplied with the
-% picker above. Without one it fails with an honest encoding error rather
-% than dropping the characters.
+@require: stdja-mini
+@require: color
+@require: gr
+@require: code
+@require: enumitem/enumitem
+@require: figbox/figbox
+
+open EnumitemAlias
+open FigBox
+
+document (|
+  title = {Lists and figures};
+  author = {rustyfi};
+|) '<
+  +p {
+    Nesting in a list is by the number of stars, and the label style is one
+    optional argument. Counters nest with the list, so an inner level is
+    numbered inside its parent rather than continuing it.
+  }
+  +listing{
+    * a bulleted item
+    * another, with children
+      ** nested one level
+        *** and two
+      ** back out again
+  }
+  +enumerate?:(paren-alph){
+    * numbered, with the label style chosen by \\code(\`?:(paren-alph)\`);
+    * the counters nest with the list
+      ** so this one is lettered too
+  }
+
+  +p {
+    A \\emph{figbox} is a rectangle you build up and then place. Text becomes
+    one, and \\code(\`frame\`); wraps whatever it is given:
+  }
+  +fig-center(textbox-with-width 140pt
+    {The quick brown fox jumps over the lazy dog.} |> frame 1pt (Color.gray 0.8));
+  +p {
+    So do graphics, sized either by hand or from their own bounding box:
+  }
+  +fig-center(from-graphics (150pt, 100pt) [
+    Gr.circle (30pt, 40pt) 20pt |> fill Color.blue;
+    Gr.rectangle (30pt, 40pt) (90pt, 80pt) |> stroke 2pt Color.red;
+    Gr.rectangle-round 4pt (70pt, 90pt) (120pt, 10pt) |> stroke 5pt Color.orange;
+  ] |> frame 1pt (Color.gray 0.8));
+  +p {
+    And boxes compose, so a row of figures is one \\code(\`hconcat\`);:
+  }
+  +fig-center(hconcat [
+    dummy-box 60pt 40pt;
+    gap 10pt;
+    textbox {caption} |> hvmargin 6pt |> frame 1pt Color.black;
+  ]);
+  +p {
+    The two compose with each other too, because a figbox is just a value:
+    the list below has one in every item.
+  }
+  +listing{
+    * a plain item
+    * \\fig-inline(dummy-box 24pt 8pt |> frame 0.5pt Color.black); after some text
+    * \\fig-inline(textbox {boxed} |> hvmargin 3pt |> frame 0.5pt (Color.gray 0.5));
+  }
+>
+`,
+  },
+  {
+    name: "Rails and paths (railway, xpath)",
+    needsFont: false,
+    source: `% Two libraries that describe a shape, in two different senses of the word.
+%
+% railway ships no manual -- its half is built from the API its own
+% \`rail.satyh\` documents in comments, and from the way SlyDIFi's themes
+% actually call it (layout-tests/corpus/slydifi/src/theme/*.satyh).
+% The xpath half is adapted from that package's own manual,
+% layout-tests/corpus/xpath/doc/xpath-doc.saty.
+
+@require: stdja-mini
+@require: color
+@require: gr
+@require: list
+@require: code
+@require: railway/railway
+@require: xpath/xpath
+
+% A RAIL has no absolute position, so it can be rotated, scaled and repeated
+% before it is pinned to a point. Here: one square built by repeating a single
+% edge at four angles, and one closed curve built from two smooth segments.
+let-inline ctx \\rails =
+  let grf (x, y) =
+    let edge = Rail.(init |> push-line (18pt, 18pt)) in
+    let square =
+      Rail.(map-repeat (fun i -> edge ^ (90. *. (float i))) 4)
+        |> Rail.to-loop (x +' 10pt, y +' 4pt)
+    in
+    let leaf =
+      Rail.(init |> push-smooth-curve (30pt, 0pt) (14pt, 22pt)
+                 |> push-smooth-curve (0pt -' 30pt, 0pt) (0pt -' 14pt, 22pt))
+        |> Rail.to-loop (x +' 60pt, y +' 4pt)
+    in
+    [ square |> stroke 1pt Color.black
+    ; leaf |> fill (Color.gray 0.75) ]
+  in
+  inline-graphics 110pt 42pt 0pt grf
+
+% An XPATH is placed, but it can be asked questions. A five-point star is
+% folded out of four \`line-to\` steps, and \`get-intersections\` finds every
+% point where it crosses itself.
+let-inline ctx \\star =
+  let grf (x, y) =
+    let star = XPath.(
+      [2.; 4.; 1.; 3.] |> List.fold-left (fun pp r -> (
+        let theta = r *. 6.28 /. 5. +. 1.57 in
+        pp |> line-to (x +' 40pt *' (cos theta), y +' 40pt +' 40pt *' (sin theta))
+      )) (start-path (x, y +' 80pt)) |> close-with-line
+    ) in
+    let marks = XPath.get-intersections 0.2pt star
+      |> List.map (fun p -> Gr.circle p 3pt |> fill Color.yellow)
+    in
+    (star |> XPath.stroke 1pt Color.blue) :: marks
+  in
+  inline-graphics 84pt 84pt 0pt grf
+
+% Both at once: xpath finds where the star crosses itself, and a rail-built
+% diamond is pinned at each of those points -- one library answering a
+% question the other one then draws.
+%
+% Note what is NOT here. \`offset-path\`, xpath's outward offset, is undefined
+% on a self-intersecting outline and returns NaN coordinates for this star; it
+% wants a simple closed path, which is how the logo example uses it.
+let-inline ctx \\both =
+  let grf (x, y) =
+    let star = XPath.(
+      [2.; 4.; 1.; 3.] |> List.fold-left (fun pp r -> (
+        let theta = r *. 6.28 /. 5. +. 1.57 in
+        pp |> line-to (x +' 40pt *' (cos theta), y +' 40pt +' 40pt *' (sin theta))
+      )) (start-path (x, y +' 80pt)) |> close-with-line
+    ) in
+    let edge = Rail.(init |> push-line (7pt, 7pt)) in
+    let diamond (px, py) =
+      Rail.(map-repeat (fun i -> edge ^ (90. *. (float i))) 4)
+        |> Rail.to-loop (px, py -' 7pt) |> fill Color.orange
+    in
+    (star |> XPath.dashed-stroke 0.8pt (3pt, 2pt, 0pt) (Color.gray 0.5))
+      :: (XPath.get-intersections 0.2pt star |> List.map diamond)
+  in
+  inline-graphics 90pt 90pt 0pt grf
+
+in
+
+document (|
+  title = {Rails and paths};
+  author = {rustyfi};
+|) '<
+  +p {
+    A \\emph{rail} is a run of line and Bezier segments with no absolute
+    position, which is what makes it repeatable: \\rails; is one square built
+    by rotating a single edge four times, and one closed curve built from two
+    smooth segments. The same idea applied to text gives a wavy underline,
+    a rail cut to the measured width of the box it decorates:
+    \\uwave{like this one}.
+  }
+  +p {
+    \\code(\`XPath.t\`); is a path built the way the built-in one is, but it can
+    also be asked questions. Below on the left is a five-point star folded out
+    of four \\code(\`line-to\`); steps, with \\code(\`get-intersections\`); marking
+    every point where it crosses itself.
+  }
+  +p {
+    Neither library knows about the other, and they compose anyway: on the
+    right, the intersections xpath computed are where a rail-built diamond
+    gets pinned.
+  }
+  +p { \\star; \\both; }
+>
+`,
+  },
+  {
+    name: "A full document class (stdjareport, latexcmds)",
+    needsFont: true,
+    source: `% A whole document class, doing everything a class does: a title block,
+% numbered chapters and sections, cross-references that resolve on a second
+% pass, theorem-like environments, footnotes, running page furniture, and a
+% floating figure that is registered on one page and printed on another.
+%
+% The stdja family renders that furniture with characters outside WinAnsi, so
+% this example needs a real font -- the one named in the header, which the
+% page loads before the first typeset. Under the base-14 fallback alone it
+% fails with an honest encoding error rather than dropping the characters.
+%
+% WHAT TO LOOK FOR: a \\figure does NOT sit where you write it. The class
+% registers it on the page it appears on and emits it at the top of a LATER
+% one, out of the page-parts callback -- so the document has to be long enough
+% to have a later page, which is what the filler at the end is for. Scroll to
+% page 2. (Until rustyfi 0.1.4 this rendered nothing at all: the port fired
+% page-break hooks after the whole page loop had finished, so the float list
+% was always empty by the time a header was built. Upstream interleaves them
+% per page.)
+%
+% Switch Output to HTML and the figure disappears -- that one is honest, not a
+% regression. A continuous web document has no "top of the next page" to float
+% to. The \\ref numbers survive, because a cross-reference is resolved by
+% re-running the document rather than by page geometry.
+
+@require: stdjareport
+@require: color
+@require: gr
+@require: code
+@require: latexcmds/latexcmds
+
+let-inline ctx \\bars =
+  let w = 60pt in let h = 18pt in
+  inline-graphics w h 0pt (fun (x, y) -> (
+    [0; 1; 2; 3; 4] |> List.map (fun i -> (
+      let fi = float i in
+      let bx = x +' w *' (0.02 +. fi *. 0.2) in
+      fill (Color.gray (0.75 -. fi *. 0.12))
+        (Gr.rectangle (bx, y) (bx +' w *' 0.14, y +' h *' (0.25 +. fi *. 0.18)))
+    ))
+  ))
+
+let-block ctx +center it =
+  line-break true true ctx (inline-fil ++ read-inline ctx it ++ inline-fil)
+
+let filler = {A floating figure is page furniture: the class registers it on the
+page where you write it, and emits it at the top of a later one. So a document
+has to be long enough to have a later page, or the figure has nowhere to go.}
+in
 
 document (|
   title = {A document with a title page};
   author = {rustyfi};
-  show-title = true;
-  show-toc = false;
 |) '<
-  +section { Introduction } <
+  +chapter ?:(\`intro\`) {Registered here, printed overleaf} <
     +p {
-      The full stdja class gives you sections, a title block and running
-      page furniture.
+      The class draws its own title block above, numbers this chapter, and
+      runs a page number along the foot of every page. None of that is in the
+      source below -- it is what a document class is for.
     }
+    +p {
+      \\figure ?:(\`f1\`) {A bar chart} < +center { \\bars; } >
+      is registered in this paragraph and appears at the top of the next page.
+    }
+    +section {Theorems and references} <
+      +p {
+        Environments come with the class too, numbered in the same scheme as
+        the sections around them:
+      }
+      +theorem ?*?:(\`pyth\`) {
+        For a right triangle with legs a and b and hypotenuse c, the identity
+        a squared plus b squared equals c squared holds.
+      }
+      +proof {
+        Omitted, in the manner of textbooks everywhere.\\footnote{A footnote is
+        set at the bottom of the page it is anchored on, which means the page
+        breaker has to know about it before it has finished breaking.}
+      }
+      +p {
+        \\code(\`\\ref\`); resolves against a label registered elsewhere in the
+        document, so neither number below is written anywhere in the source:
+        chapter \\ref(\`intro\`); contains theorem \\ref(\`theorem:pyth\`);, and each
+        reference is a live link in the PDF. Note the \\code(\`theorem:\`); prefix
+        on the second one, which the class adds to keep its environment labels
+        out of the section namespace. Resolving either needs a second pass over
+        the whole document, because the number is not known until the first one
+        has finished.
+      }
+      +p {
+        Nothing stops an inline package joining in. \\emph{latexcmds} decorates
+        a box rather than a paragraph, so a callout is
+        \\fbox ?:(1pt) ?:(4pt) ?:(Color.blue) ?:(RGB(0.93, 0.97, 1.0)) {one
+        inline command}, and a dropped shadow is
+        \\shadowbox ?:(0.4pt) ?:(3pt) ?:(Color.black) ?:(Color.white) ?:(2pt) ?:(Color.gray 0.6) {another}.
+      }
+      +p {
+        A box can also be sized or turned, which is where the two levels stop
+        agreeing: \\framebox(3cm){wrapped}, then \\rotatebox(0.35){tilted}, both
+        of them boxes the line breaker has to make room for.
+      }
+    >
+    +p { #filler; } +p { #filler; } +p { #filler; } +p { #filler; }
+    +p { #filler; } +p { #filler; } +p { #filler; } +p { #filler; }
   >
 >
 `,
   },
   {
     name: "Japanese (stdja, needs a font)",
+    // Deliberately NOT folded into the class example above, though both
+    // are stdja-family documents. It is the only entry that exercises the
+    // abbrev-keyed font store — `stdja` asks for `ipaexm` and `ipaexg` BY
+    // NAME, a different path from the three Latin style slots — and the
+    // only one whose selection costs a 5.8 MB download, which is why the
+    // page fetches that face lazily. Merging it into a general-purpose
+    // example would make every visitor pay for it.
     needsFont: true,
     needsCjk: true,
     source: `@require: stdja
@@ -297,334 +648,34 @@ document (|
 `,
   },
   {
-    name: "Syntax highlighting (code-printer)",
+    name: "Slides (SlyDIFi)",
     needsFont: false,
-    source: `% code-printer highlights a source listing. It drives \`string-scan\`, a
-% regexp primitive whose absence used to stop the package loading at all.
+    source: `% Adapted from SlyDIFi's own slide deck, layout-tests/corpus/slydifi/doc/
+% slydifi.saty. That deck uses the \`arctic\` theme with Japanese fonts; \`plain\`
+% is the theme that needs no font beyond the one you are already typesetting
+% with.
 %
-% The colours are the theme's; the FOUR code faces it also asks for are not
-% bundled here, so keyword/identifier/string/comment share one face. The
-% highlighting is unaffected — only the typographic distinction is.
+% A slide deck is not a broken-up document: there is no page-break algorithm
+% here at all. Every +frame is exactly one page, laid out by the theme, and an
+% OVERLAY frame is n pages of the same slide with different things revealed --
+% which is why the page count below is larger than the number of frames.
 
-@require: stdja-mini
-@require: code-printer/code-printer
-@require: code-printer/code-theme
-@require: code-printer/code-syntax
-
-document (|
-  title = {Syntax highlighting};
-  author = {};
-  show-title = false;
-  show-toc = false;
-|) '<
-  +p { Rust, in the \`basic-light\` theme: }
-  +code-printer ?:(
-    CodePrinter.make-config CodeSyntax.rust CodeTheme.basic-light
-  )(\`fn main() {
-    // greet, twice
-    let greeting = "hello";
-    for i in 0..2 {
-        println!("{} {}", greeting, i);
-    }
-}\`);
-
-  +p { The same listing as OCaml, in \`gruvbox-dark\`: }
-  +code-printer ?:(
-    CodePrinter.make-config CodeSyntax.ocaml CodeTheme.gruvbox-dark
-  )(\`let () =
-  (* greet, twice *)
-  let greeting = "hello" in
-  for i = 0 to 1 do
-    Printf.printf "%s %d\\n" greeting i
-  done\`);
->
-`,
-  },
-  {
-    name: "Tables (easytable)",
-    needsFont: false,
-    source: `% Adapted from easytable's own manual, layout-tests/corpus/easytable/doc/easytable.saty.
-
-@require: stdja-mini
-@require: easytable/easytable
-
-open EasyTableAlias
-
-document (|
-  title = {Tables};
-  author = {rustyfi};
-|) '<
-  +p {
-    The second argument is one flat inline text. Cell boundaries are the
-    vertical bars, so a table reads in the source the way it prints.
-  }
-  +easytable[l; c; r]{
-    | header1    | header2      | header3
-    | align left | align center | align right
-    | a          | b            | c
-    |}
-  +p {
-    Rules go in an optional first argument: \\emph{t} and \\emph{b} for the
-    top and bottom, \\emph{m n} for one after row n.
-  }
-  +easytable?:[t; b; m 1][r; c; l]{
-    | How       | I       | want
-    | a         | drink   | alcoholic
-    | of        | course  | after
-    |}
->
-`,
-  },
-  {
-    name: "Lists (enumitem)",
-    needsFont: false,
-    source: `% Adapted from enumitem's own manual, layout-tests/corpus/enumitem/doc/enumitem.saty.
-
-@require: stdja-mini
-@require: enumitem/enumitem
-
-open EnumitemAlias
-
-document (|
-  title = {Lists};
-  author = {rustyfi};
-|) '<
-  +p {
-    Nesting is by the number of stars, and the label style is one optional
-    argument.
-  }
-  +listing{
-    * a bulleted item
-    * another, with children
-      ** nested one level
-        *** and two
-      ** back out again
-  }
-  +enumerate?:(paren-alph){
-    * numbered, with the label style chosen by the option
-    * the counters nest with the list
-      ** so this one is lettered too
-  }
->
-`,
-  },
-  {
-    name: "Floating figures (stdjareport)",
-    needsFont: true,
-    source: `% A stdjareport \\figure does NOT sit where you write it. The class registers
-% it on the page it appears on and emits it at the top of a LATER page, out of
-% the page-parts callback — so the document has to be long enough to have a
-% later page, which is what the filler below is for. Scroll to page 2.
-%
-% Until rustyfi 0.1.4 this rendered NOTHING, in PDF or anywhere else: the port
-% fired page-break hooks after the whole page loop had finished, so the float
-% list was always empty by the time a header was built. Upstream interleaves
-% them per page.
-%
-% Switch Output to HTML and the figure disappears again — that one is honest,
-% not a regression. A continuous web document has no "top of the next page" to
-% float to, and the reflowable backend reads the block stream from BEFORE page
-% breaking, where a \\figure contributes nothing at all. Where such a figure
-% should land in a pageless document is still an open question.
-
-@require: stdjareport
+@require: class-slydifi/theme/plain
 @require: color
+@require: gr
+@require: code
 
-let-inline ctx \\bars =
-  let w = 60pt in let h = 18pt in
-  inline-graphics w h 0pt (fun (x, y) -> (
-    [0; 1; 2; 3; 4] |> List.map (fun i -> (
+let-inline ctx \\chart =
+  inline-graphics 160pt 60pt 0pt (fun (x, y) -> (
+    [0; 1; 2; 3; 4; 5] |> List.map (fun i -> (
       let fi = float i in
-      let bx = x +' w *' (0.02 +. fi *. 0.2) in
-      fill (Color.gray (0.75 -. fi *. 0.12))
-        (Gr.rectangle (bx, y) (bx +' w *' 0.14, y +' h *' (0.25 +. fi *. 0.18)))
+      let bx = x +' 160pt *' (0.02 +. fi *. 0.16) in
+      fill (Color.rgb (0.2 +. fi *. 0.13) 0.45 0.75)
+        (Gr.rectangle (bx, y) (bx +' 160pt *' 0.12, y +' 60pt *' (0.2 +. fi *. 0.14)))
     ))
   ))
 
-let-block ctx +center it =
-  line-break true true ctx (inline-fil ++ read-inline ctx it ++ inline-fil)
-
-let filler = {A floating figure is page furniture: the class registers it on the
-page where you write it, and emits it at the top of a later one. So a document
-has to be long enough to have a later page, or the figure has nowhere to go.}
 in
-
-document (| title = {Floating figures}; author = {rustyfi}; |) '<
-  +chapter {Registered here, printed overleaf} <
-    +p {
-      \\figure ?:(\`f1\`) {A bar chart} < +center { \\bars; } >
-      is registered in this paragraph and appears at the top of the next page.
-    }
-    +p { #filler; } +p { #filler; } +p { #filler; } +p { #filler; }
-    +p { #filler; } +p { #filler; } +p { #filler; } +p { #filler; }
-  >
->
-`,
-  },
-  {
-    name: "Figures (figbox)",
-    needsFont: false,
-    source: `% Adapted from figbox's own manual, layout-tests/corpus/figbox/doc/manual.saty.
-
-@require: stdja-mini
-@require: gr
-@require: color
-@require: figbox/figbox
-
-open FigBox
-
-document (|
-  title = {Figures};
-  author = {rustyfi};
-|) '<
-  +p {
-    A figbox is a rectangle you build up and then place. Text becomes one:
-  }
-  +fig-center(textbox-with-width 140pt
-    {The quick brown fox jumps over the lazy dog.} |> frame 1pt (Color.gray 0.8));
-  +p {
-    So do graphics, sized either by hand or from their own bounding box:
-  }
-  +fig-center(from-graphics (150pt, 100pt) [
-    Gr.circle (30pt, 40pt) 20pt |> fill Color.blue;
-    Gr.rectangle (30pt, 40pt) (90pt, 80pt) |> stroke 2pt Color.red;
-    Gr.rectangle-round 4pt (70pt, 90pt) (120pt, 10pt) |> stroke 5pt Color.orange;
-  ] |> frame 1pt (Color.gray 0.8));
-  +p {
-    And boxes compose, so a row of figures is one \\emph{hconcat}:
-  }
-  +fig-center(hconcat [
-    dummy-box 60pt 40pt;
-    gap 10pt;
-    textbox {caption} |> hvmargin 6pt |> frame 1pt Color.black;
-  ]);
->
-`,
-  },
-  {
-    name: "Boxes and rotation (latexcmds)",
-    needsFont: false,
-    source: `% Adapted from latexcmds' own manual,
-% layout-tests/corpus/latexcmds/doc/latexcmds-doc.saty.
-
-@require: stdja-mini
-@require: color
-@require: latexcmds/latexcmds
-
-document (|
-  title = {LaTeX-like commands};
-  author = {rustyfi};
-|) '<
-  +p {
-    Four box decorations, each taking the same optional line width, padding,
-    stroke colour and fill colour: \\fbox{fbox}, \\doublebox{doublebox},
-    \\ovalbox{ovalbox}, \\shadowbox{shadowbox}.
-  }
-  +p {
-    With those options given:
-    \\fbox ?:(2pt) ?:(6pt) ?:(Color.blue) ?:(RGB(0.9, 1.0, 0.95)) {hello}, and
-    \\shadowbox ?:(1pt) ?:(6pt) ?:(Color.black) ?:(Color.white) ?:(4pt) ?:(Color.red) {hello}.
-  }
-  +p {
-    \\framebox(4cm){a fixed-width box wraps its contents}, then
-    \\scalebox?:(2.0)?:(2.0){Ouch} and \\rotatebox(0.5){tilted}.
-  }
->
-`,
-  },
-  {
-    name: "Rails and curves (railway)",
-    needsFont: false,
-    source: `% railway ships no manual — this is built from the API its own \`rail.satyh\`
-% documents in comments, and from the way SlyDIFi's themes actually call it
-% (layout-tests/corpus/slydifi/src/theme/*.satyh).
-
-@require: stdja-mini
-@require: color
-@require: railway/railway
-
-let-inline ctx \\diagram =
-  let grf (x, y) =
-    let edge = Rail.(init |> push-line (18pt, 18pt)) in
-    let square =
-      Rail.(map-repeat (fun i -> edge ^ (90. *. (float i))) 4)
-        |> Rail.to-loop (x +' 10pt, y +' 4pt)
-    in
-    let leaf =
-      Rail.(init |> push-smooth-curve (30pt, 0pt) (14pt, 22pt)
-                 |> push-smooth-curve (0pt -' 30pt, 0pt) (0pt -' 14pt, 22pt))
-        |> Rail.to-loop (x +' 60pt, y +' 4pt)
-    in
-    [ square |> stroke 1pt Color.black
-    ; leaf |> fill (Color.gray 0.75) ]
-  in
-  inline-graphics 110pt 42pt 0pt grf
-
-in
-
-document (|title = {Rails}; author = {rustyfi};|) '<
-  +p {
-    A \\emph{rail} is a run of line and Bezier segments with no absolute
-    position, so it can be rotated, scaled and repeated before it is pinned
-    to a point. \\diagram; is one square built by repeating a single edge at
-    four angles, and one closed curve built from two smooth segments.
-  }
-  +p {
-    The wavy underline is the same idea applied to text: \\uwave{a rail cut
-    to the measured width of the box it decorates}.
-  }
->
-`,
-  },
-  {
-    name: "Path algorithms (xpath)",
-    needsFont: false,
-    source: `% Adapted from xpath's own manual, layout-tests/corpus/xpath/doc/xpath-doc.saty
-% — the self-intersecting star, with \`get-intersections\` marking the crossings.
-
-@require: stdja-mini
-@require: gr
-@require: list
-@require: color
-@require: code
-@require: xpath/xpath
-
-let-inline ctx \\star =
-  let grf (x, y) =
-    let star = XPath.(
-      [2.; 4.; 1.; 3.] |> List.fold-left (fun pp r -> (
-        let theta = r *. 6.28 /. 5. +. 1.57 in
-        pp |> line-to (x +' 40pt *' (cos theta), y +' 40pt +' 40pt *' (sin theta))
-      )) (start-path (x, y +' 80pt)) |> close-with-line
-    ) in
-    let marks = XPath.get-intersections 0.2pt star
-      |> List.map (fun p -> Gr.circle p 3pt |> fill Color.yellow)
-    in
-    (star |> XPath.stroke 1pt Color.blue) :: marks
-  in
-  inline-graphics 84pt 84pt 0pt grf
-
-in
-
-document (|title = {Paths}; author = {rustyfi};|) '<
-  +p {
-    \\code(\`XPath.t\`); is a path built the same way the built-in one is, but
-    it can also be asked questions. Here a five-point star is folded out of
-    four \\code(\`line-to\`); steps, and \\code(\`get-intersections\`); finds every
-    point where it crosses itself.
-  }
-  +p { \\star; }
->
-`,
-  },
-  {
-    name: "Slides (SlyDIFi)",
-    needsFont: false,
-    source: `% Adapted from SlyDIFi's own slide deck, layout-tests/corpus/slydifi/doc/slydifi.saty.
-% That deck uses the \`arctic\` theme with Japanese fonts; \`plain\` is the theme
-% that needs no font beyond the one you are already typesetting with.
-
-@require: class-slydifi/theme/plain
 
 SlydifiThemePlain.document '<
   +make-title(|
@@ -632,76 +683,43 @@ SlydifiThemePlain.document '<
     author = {| rustyfi |};
     date = {| today |};
   |);
-  +frame{A slide}<
-    +p { Every frame is one page, laid out by the theme rather than by a
-         page-break algorithm. }
+
+  +section{| What a deck is made of |}<
+    +frame{One frame, one page}<
+      +p {
+        Every frame is one page, laid out by the theme rather than by a
+        page-break algorithm. A section slide, like the one before this, is
+        the same machinery with a different layout.
+      }
+      +listing{
+        * frames are pages
+        * the theme owns the layout
+        * nothing here is broken across a page
+      }
+    >
   >
-  +frame{Overlays}<
-    +listing{
-      * items appear
-      * one frame at a time
+
+  +frame ?:(3) {Overlays}<
+    +p {
+      An overlay frame is typeset once per step, so this one is three pages
+      that differ only in what has been revealed.
+    }
+    +oitem(fun i -> i >= 1){appears on the first step}<>
+    +oitem(fun i -> i >= 2){joins it on the second}<
+      +oitem(fun i -> i >= 3){and this child on the third}<>
+    >
+    +p {
+      \\emph ?:(fun i -> i >= 2) {The emphasis on this sentence} switches on at
+      step two, because \\code(\`\\emph\`); takes the same predicate the list items
+      do.\\footnote{Footnotes are per frame, and land at the foot of the slide.}
     }
   >
->
-`,
-  },
-  {
-    name: "Standard library (base)",
-    // Flipped when the submodule pin moved to the typesetter's 0.1.1: text
-    // inside a line-stacked `EmbeddedBlock` used to be dropped, which silently
-    // swallowed the CONTENTS of the natural-deduction tree at the end of this
-    // document. Now they are typeset, and one of them is `\vdash` (⊢), which
-    // is outside WinAnsi. So the example did not change and neither did the
-    // label's meaning — the renderer stopped losing the character that makes
-    // it true.
-    needsFont: true,
-    source: `% Adapted from satysfi-base's own README, whose TL;DR opens with \`Inline.read\`,
-% and from its \`__test__/satysrc/derive\` cases.
 
-@require: stdja-mini
-@require: code
-@require: math
-@require: base/typeset/base
-@require: base/typeset/derive
-@require: base/inline
-@require: base/int
-@require: base/list-ext
-@require: base/string
-
-open Derive
-
-let squares =
-  List.iterate 6 (fun n -> n + 1) 0
-    |> List.map (fun n -> Int.to-string (n * n))
-    |> List.intersperse \`, \`
-    |> List.fold-left (^) \` \`
-
-in
-
-document (|title = {Base}; author = {rustyfi};|) '<
-  +p {
-    \\code(\`satysfi-base\`); is a standard library: basic types, data
-    structures, text processing, and extra typesetting. Its README opens with
-    \\code(\`Inline.read\`);, which turns inline text into boxes under whatever
-    context you hand it, and everything else composes the same way.
-  }
-  +p {
-    Six squares, built with \\code(\`List.iterate\`);, \\code(\`List.map\`); and
-    \\code(\`List.intersperse\`);:
-    \\eval(Inline.of-string squares);
-  }
-  +p {
-    And \\code(\`typeset/derive\`); renders natural-deduction trees inside math:
-    \${\\proven!(
-      open DeriveDSL in
-      derive \${\\vdash A \\wedge B}
-      |> by {\${\\wedge} I}
-      |> from [
-        assume \${\\vdash A};
-        assume \${\\vdash B};
-      ]
-    )}
-  }
+  +frame{Drawing on a slide}<
+    +p {
+      A slide is an ordinary page, so ordinary graphics work on it: \\chart;
+    }
+  >
 >
 `,
   },
@@ -843,16 +861,14 @@ page-break (UserDefinedPaper (pw, pw))
   // SATySFi 0.1 (the dev-0-1-0 / saphe-split line).
   //
   // A separate generation, not a dialect: different grammar, different
-  // bundled corpus, and the two do not mix here — the module mounts exactly
-  // one corpus per compile. Every entry below therefore carries `lang: 1`,
-  // and picking one moves the header's Lang selector with it.
+  // bundled corpus. Every entry below carries `lang: 1`, and picking one
+  // moves the header's Lang selector with it.
   // ---------------------------------------------------------------------
-
   {
     name: "0.1: A first document",
     lang: 1,
     needsFont: false,
-    source: `% SATySFi 0.1. Choose 0.1 in the Lang selector above — this document is a
+    source: `% SATySFi 0.1. Choose 0.1 in the Lang selector above -- this document is a
 % parse error under 0.0.6, and every 0.0.6 example above is a parse error
 % under 0.1. Each generation has its own bundled package corpus, and
 % @require: resolves against exactly one of them.
@@ -860,15 +876,27 @@ page-break (UserDefinedPaper (pw, pw))
 % What is different from 0.0.6, all of it visible below:
 %
 %   - a package IS a module, so its bindings are reached qualified
-%     (V01Mini.document) or brought into scope with "let open M in" — note
+%     (V01Mini.document) or brought into scope with "let open M in" -- note
 %     the leading "let", which 0.0.6's bare "open M in" did not have;
-%   - records separate their fields with a comma, not a semicolon;
+%   - records separate their fields with a comma, not a semicolon, and so do
+%     list literals;
 %   - math is split in two. \${...} is math-TEXT, the unevaluated source, and
 %     read-math turns it into math-BOXES; that is why V01Mini declares its
 %     fraction as "val math ctx \\frac numer denom" and reads each argument
-%     explicitly rather than receiving boxes.
+%     explicitly rather than receiving boxes;
+%   - an optional argument is a LABELLED BUNDLE, ?(break = true). 0.1 dropped
+%     0.0.6's fused ?: sigil entirely, so an option is named at the call site
+%     instead of being positional.
+%
+% itemize, at the end, is one of the real upstream 0.1 packages bundled here
+% (dist-v01/packages/itemize.satyh), and it shows the other half of the
+% change: a list is a VALUE, not a block-text tree -- Item(text, children),
+% nested by nesting the constructor. The outermost Item's own text is a
+% conventional throwaway, since listing and enumerate both match Item(_,
+% items) and discard it.
 
 @require: v01-mini
+@require: itemize
 
 let open V01Mini in
 document (| title = \`A first document\` |) '<
@@ -877,160 +905,15 @@ document (| title = \`A first document\` |) '<
     runs, read with the SATySFi 0.1 grammar rather than 0.0.6's.
   }
   +p {
-    Inline commands are module members too: \\emph{emphasised} and
-    \\bold{bold} are both val inline bindings inside V01Mini, in scope
-    without a prefix because of the let open above.
+    Inline commands are module members too: \\emph{emphasised} and \\bold{bold}
+    are both val inline bindings inside V01Mini, in scope without a prefix
+    because of the let open above.
   }
   +p {
     Math comes through that same split: \${a^2 + b^2 = c^2}, a fraction
     \${\\frac{1}{x + 1}}, and a limit \${\\lim_{n} a_n = L}.
   }
->
-`,
-  },
-  {
-    name: "0.1: Modules and sealing",
-    lang: 1,
-    needsFont: false,
-    source: `% The headline difference from 0.0.6: a package is a real module, and a
-% module can be SEALED. The bundled V01Sealed is declared
-%
-%   module V01Sealed :> sig
-%     type t :: o
-%     val make : int -> t
-%     val get : t -> int
-%     val \\show : inline [t]
-%   end = struct ... end
-%
-% The sealing sigil is :>, never 0.0.6's "module M : sig ... end" — that
-% spelling is a parse error in 0.1. "type t :: o" declares t OPAQUE, so its
-% real definition (a one-constructor variant) does not escape: the
-% constructor is deregistered at the seal point, and make/get/\\show are the
-% only way to build, read or print one from out here.
-
-@require: v01-mini
-@require: v01-sealed
-
-let open V01Mini in
-
-let boxed = V01Sealed.make 41 in
-let answer = embed-string (arabic (V01Sealed.get boxed + 1)) in
-
-% V01Mini is UNSEALED, so let open puts all of it in scope at once: a
-% val rec, a user-defined operator, and a variant with its constructors.
-let total = embed-string (arabic (sum-list [1, 2, 3, 4])) in
-let label =
-  match Known 7 with
-  | Known n -> embed-string (arabic (n +++ 0))
-  | Unknown -> embed-string \`unknown\`
-  end
-in
-
-document (| title = \`Modules and sealing\` |) '<
-  +p {
-    Reading a sealed value back and adding one gives #answer;. Nothing out
-    here can look inside it: only the three members the signature exports.
-  }
-  +p {
-    A qualified inline command runs the module's own code:
-    \\V01Sealed.show(V01Sealed.make 7);
-  }
-  +p {
-    And from the opened V01Mini: its recursive sum is #total;, and its
-    user-defined operator, applied inside a match on its own variant,
-    gives #label;.
-  }
->
-`,
-  },
-  {
-    name: "0.1: Multi-stage (quote and splice)",
-    lang: 1,
-    needsFont: false,
-    source: `% Multi-stage evaluation. "&e" QUOTES an expression — its value is code, to
-% be run one stage later — and "~e" SPLICES in the result of a computation
-% from the stage before.
-%
-% A document is stage 1, so a bare quote here is refused outright:
-%
-%   let c = &(1) in ...
-%   -> \`&\` (next-stage quote) is only valid at stage 0, but this is stage 1
-%
-% The way in is a splice, because a splice reads its OPERAND one stage
-% earlier. Everything inside the two "~( ... )" below therefore runs before
-% the document does, and every "&" inside those builds a piece of the
-% program the document will actually run.
-%
-% One part of the 0.1 staging surface CANNOT appear here. 0.1 replaced
-% 0.0.6's whole-file "@stage:" header with a per-binding qualifier,
-% "val ~x" and "val persistent ~x" — but those are LIBRARY bindings, and 0.1
-% has neither an expression-level module nor a staged "let", so a
-% single-file document has nowhere to put one. The playground compiles
-% exactly one file, so they are out of reach here rather than unsupported;
-% rustyfi's crates/rustyfi-lang/tests/staging_v1.rs exercises them.
-
-@require: v01-mini
-
-% Stage-0 recursion that BUILDS code rather than computing a number: each
-% step quotes a multiplication whose right operand is spliced in from the
-% step before, so what reaches the document is 3 * (3 * (3 * 1)) as an
-% expression — unrolled at stage 0, run at stage 1.
-let cube =
-  ~(
-    let rec pow n = if n <= 0 then &(1) else &( 3 * ~(pow (n - 1)) ) in
-    pow 3
-  )
-in
-
-% "code int" is 0.1's type for a quoted int. 0.0.6 has no spelling for it at
-% all — deliberately, matching upstream — so this annotation is 0.1-only.
-% It types the parameter of a stage-0 function that duplicates whatever code
-% it is handed, without ever running it.
-let doubled =
-  ~(
-    let twice (c : code int) = &( ~c + ~c ) in
-    twice (&(21))
-  )
-in
-
-let a = embed-string (arabic cube) in
-let b = embed-string (arabic doubled) in
-
-let open V01Mini in
-document (| title = \`Multi-stage\` |) '<
-  +p {
-    The unrolled power gives #a;, and the duplicating macro gives #b;.
-  }
-  +p {
-    Neither number was computed by this document. Both arrived as code
-    assembled one stage earlier, and all the document did was run it.
-  }
->
-`,
-  },
-  {
-    name: "0.1: Lists (itemize)",
-    lang: 1,
-    needsFont: false,
-    source: `% itemize is one of the real upstream 0.1 packages bundled here
-% (dist-v01/packages/itemize.satyh). Two things about the call are pure 0.1
-% surface:
-%
-%   - the list is a VALUE, not a block-text tree — Item(text, children),
-%     nested by nesting the constructor;
-%   - the optional argument is a LABELLED BUNDLE, ?(break = true). 0.1
-%     dropped 0.0.6's fused ?: sigil entirely, so an optional argument is
-%     named at the call site instead of being positional.
-%
-% The outermost Item's own text is a conventional throwaway: itemize's
-% listing and enumerate both match Item(_, items) and discard it.
-
-@require: v01-mini
-@require: itemize
-
-let open V01Mini in
-document (| title = \`Lists\` |) '<
-  +p { Before the list. }
+  +p { A list is a value, and the option that spaces it out is named: }
   +Itemize.listing?(break = true)(Item({}, [
     Item({a bulleted item}, []),
     Item({another, with children}, [
@@ -1043,7 +926,140 @@ document (| title = \`Lists\` |) '<
     Item({first entry}, []),
     Item({second entry}, []),
   ]));
-  +p { After the list. }
+  +p { After the list, and back to the class's own +p. }
+>
+`,
+  },
+  {
+    name: "0.1: Modules, sealing and staging",
+    lang: 1,
+    needsFont: false,
+    source: `% Two things 0.1 has that 0.0.6 does not, in one document: real modules with
+% SEALING, and multi-stage evaluation.
+%
+% ---------------------------------------------------------------------------
+% 1. MODULES AND SEALING
+%
+% A package is a real module, and a module can be sealed. The bundled
+% V01Sealed is declared
+%
+%   module V01Sealed :> sig
+%     type t :: o
+%     val make : int -> t
+%     val get : t -> int
+%     val \\show : inline [t]
+%   end = struct ... end
+%
+% The sealing sigil is :>, never 0.0.6's "module M : sig ... end" -- that
+% spelling is a parse error in 0.1. "type t :: o" declares t OPAQUE, so its
+% real definition (a one-constructor variant) does not escape: the
+% constructor is deregistered at the seal point, and make/get/\\show are the
+% only way to build, read or print one from out here.
+%
+% ---------------------------------------------------------------------------
+% 2. MULTI-STAGE EVALUATION
+%
+% "&e" QUOTES an expression -- its value is code, to be run one stage later --
+% and "~e" SPLICES in the result of a computation from the stage before.
+%
+% A document is stage 1, so a bare quote here is refused outright:
+%
+%   let c = &(1) in ...
+%   -> \`&\` (next-stage quote) is only valid at stage 0, but this is stage 1
+%
+% The way in is a splice, because a splice reads its OPERAND one stage
+% earlier. Everything inside the two "~( ... )" below therefore runs before
+% the document does, and every "&" inside those builds a piece of the program
+% the document will actually run.
+%
+% One part of the 0.1 staging surface CANNOT appear here. 0.1 replaced
+% 0.0.6's whole-file "@stage:" header with a per-binding qualifier, "val ~x"
+% and "val persistent ~x" -- but those are LIBRARY bindings, and 0.1 has
+% neither an expression-level module nor a staged "let", so a single-file
+% document has nowhere to put one. The playground compiles exactly one file,
+% so they are out of reach here rather than unsupported; rustyfi's
+% crates/rustyfi-lang/tests/staging_v1.rs exercises them.
+
+@require: v01-mini
+@require: v01-sealed
+
+let open V01Mini in
+
+% --- sealing ---------------------------------------------------------------
+
+let boxed = V01Sealed.make 41 in
+let answer = embed-string (arabic (V01Sealed.get boxed + 1)) in
+
+% V01Mini is UNSEALED, so let open puts all of it in scope at once: a val rec,
+% a user-defined operator, and a variant with its constructors.
+let total = embed-string (arabic (sum-list [1, 2, 3, 4])) in
+let label =
+  match Known 7 with
+  | Known n -> embed-string (arabic (n +++ 0))
+  | Unknown -> embed-string \`unknown\`
+  end
+in
+
+% --- staging ---------------------------------------------------------------
+
+% Stage-0 recursion that BUILDS code rather than computing a number: each step
+% quotes a multiplication whose right operand is spliced in from the step
+% before, so what reaches the document is 3 * (3 * (3 * 1)) as an expression
+% -- unrolled at stage 0, run at stage 1.
+let cube =
+  ~(
+    let rec pow n = if n <= 0 then &(1) else &( 3 * ~(pow (n - 1)) ) in
+    pow 3
+  )
+in
+
+% "code int" is 0.1's type for a quoted int. 0.0.6 has no spelling for it at
+% all -- deliberately, matching upstream -- so this annotation is 0.1-only. It
+% types the parameter of a stage-0 function that duplicates whatever code it
+% is handed, without ever running it.
+let doubled =
+  ~(
+    let twice (c : code int) = &( ~c + ~c ) in
+    twice (&(21))
+  )
+in
+
+% Where the two halves of this document MEET, and do not: V01Sealed's members
+% are ordinary stage-1 bindings, so naming one inside a splice is refused --
+%
+%   ~( V01Sealed.get (V01Sealed.make 6) )
+%   -> invalid occurrence of variable 'V01Sealed.get' as to stage:
+%      it is bound at stage 1, but this is stage 0
+%
+% That is the nine-cell occurrence matrix doing its job, not a gap. A module
+% that meant to be callable from stage 0 says so in its signature, with
+% "val ~get" -- and that is a library binding, which a single-file document
+% has nowhere to put.
+
+let a = embed-string (arabic cube) in
+let b = embed-string (arabic doubled) in
+
+document (| title = \`Modules, sealing and staging\` |) '<
+  +p {
+    Reading a sealed value back and adding one gives #answer;. Nothing out
+    here can look inside it: only the three members the signature exports.
+  }
+  +p {
+    A qualified inline command runs the module's own code:
+    \\V01Sealed.show(V01Sealed.make 7);
+  }
+  +p {
+    And from the opened V01Mini: its recursive sum is #total;, and its
+    user-defined operator, applied inside a match on its own variant, gives
+    #label;.
+  }
+  +p {
+    The unrolled power gives #a;, and the duplicating macro gives #b;.
+  }
+  +p {
+    Neither of those two numbers was computed by this document. Both arrived
+    as code assembled one stage earlier, and all the document did was run it.
+  }
 >
 `,
   },
@@ -1056,116 +1072,185 @@ document (| title = \`Lists\` |) '<
 % lowering, sealing, evaluation, line breaking, page breaking, PDF.
 %
 % Like the 0.0.6 stdja family it renders its own title block, numbered
-% sections and running page furniture — and that furniture contains an em
-% dash, which the base-14 fonts cannot encode. Supply a font with the picker
-% above; without one it fails with an honest encoding error rather than
-% dropping the character.
+% sections and running page furniture -- and that furniture contains an em
+% dash, which the base-14 fonts cannot encode. The page loads a real face for
+% you; under the base-14 fallback alone it fails with an honest encoding error
+% rather than dropping the character.
 %
-% Note the shape of the call. The class is a module, so the document
-% envelope is StdJa.document and every block command is +StdJa.something —
-% there is no bare +p here, because nothing was opened.
+% Note the shape of the call. The class is a module, so the document envelope
+% is StdJa.document and every block command is +StdJa.something -- there is no
+% bare +p here, because nothing was opened. Its optional arguments are a
+% labelled bundle rather than a positional row, which is why the section below
+% can name \`label\` without naming anything before it.
 
 @require: std-ja
+@require: itemize
+@require: math
 
 StdJa.document (|
   title  = {A 0.1 document class},
   author = {rustyfi},
 |) '<
   +StdJa.p {
-    This is upstream's own 0.1 class, vendored into the WebAssembly module
-    and rendered end to end by the Rust port.
+    This is upstream's own 0.1 class, vendored into the WebAssembly module and
+    rendered end to end by the Rust port.
   }
-  +StdJa.section{Introduction}<
+  +StdJa.section ?(label = \`intro\`) {Introduction} <
     +StdJa.p {
-      Sections are numbered and set by the class itself, from a sealed
-      module with optional-argument rows and closed record types.
+      Sections are numbered and set by the class itself, from a sealed module
+      with optional-argument rows and closed record types. The number in the
+      next paragraph is a cross-reference to this one, resolved by running the
+      document twice.
     }
-  >
-  +StdJa.section{Conclusion}<
     +StdJa.p {
-      The quick brown fox jumps over the lazy dog.
+      Other 0.1 packages join in as ordinary modules. A list is a value:
+    }
+    +Itemize.listing?(break = true)(Item({}, [
+      Item({the class is a module}, []),
+      Item({so is the list package}, []),
+      Item({and so is the math package}, []),
+    ]));
+  >
+  +StdJa.section {Mathematics} <
+    +StdJa.p {
+      Inline math goes through 0.1's split between math-text and math-boxes,
+      the same way it does outside a class: \${a^2 + b^2 = c^2}, and a
+      subscripted sum \${x_1 + x_2 + x_3}.
+    }
+    +StdJa.p {
+      Back in section \\StdJa.ref(\`intro\`);, the quick brown fox jumps over the
+      lazy dog.
     }
   >
 >
 `,
   },
+
+  // ---------------------------------------------------------------------
+  // ACROSS THE TWO GENERATIONS.
+  //
+  // Both corpora are mounted at once, and a `@require:` searches the asking
+  // FILE's own generation first and falls back to the other. So the three
+  // below are not 0.1 examples or 0.0.6 examples — each is a program holding
+  // files of both generations, and the entry's own `lang` says only which
+  // grammar the editor's buffer is read with.
+  //
+  // They come in that order on purpose: one crossing each way, then one that
+  // cannot be made and says why.
+  // ---------------------------------------------------------------------
   {
-    name: "0.1 + 0.0.6: a class from the other generation",
-    lang: 1,
-    source: `% CROSS-VERSION IMPORT. This document is SATySFi 0.1, and the class that
-% typesets it is a SATySFi 0.0.6 package.
+    name: "0.0.6 + 0.1: a 0.1 library in a 0.0.6 document",
+    needsFont: false,
+    source: `% CROSS-VERSION IMPORT, THE OTHER WAY ROUND. This document is SATySFi 0.0.6
+% -- leave the Lang selector on 0.0.6 -- and the three libraries it computes
+% with are SATySFi 0.1 packages.
 %
-% Nothing here selects that. \`@require: stdja-mini\` is an ordinary require;
-% the loader searches the generation of the file asking — 0.1, so
-% dist-v01/packages/ first — and falls back to the other, which is where
-% stdja-mini lives. That fallback IS the bridge. Check the Packages panel
-% with Lang on 0.1 and stdja-mini is not in the list; switch to 0.0.6 and it
-% is. So this example cannot be passing by picking up a 0.1 package of the
-% same name, because there is no such package.
+% Nothing here selects that either. \`@require: int\` is an ordinary require;
+% the loader searches the generation of the file asking -- 0.0.6, so
+% dist/packages/ first -- and falls back to the other, which is where \`int\`,
+% \`float\` and \`ordering\` live. Check the Packages panel with Lang on 0.0.6 and
+% none of the three is in the list; switch to 0.1 and all three are. So this
+% cannot be passing by picking up a 0.0.6 package of the same name, because
+% there is no such package. (\`base/int\` is a different package, from a
+% different author, and is not what is being called here.)
 %
-% What the port does with it, per file rather than per document: the 0.0.6
-% package is parsed with the 0.0.6 grammar, elaborated under 0.0.6, and its
-% bindings are spliced into the merged program wrapped in a version scope,
-% so \`page-break A4Paper\` inside it resolves to 0.0.6's page constructor and
-% 0.0.6's primitive — while everything below is read as 0.1.
+% The values come back as ordinary values. \`Int.compare\` returns 0.1's
+% \`Basic.ordering\`, a variant declared in a 0.1 file, and this 0.0.6 document
+% carries it to \`Ordering.show\` without either side adapting anything -- the
+% boundary is per FILE, and a variant that is not version-forked simply
+% crosses.
 %
-% The staging block proves the second half of that. \`~( ... )\` and \`&\` are
-% 0.1 surface here (0.0.6 spells staging with a whole-file @stage: header),
-% and they run one stage before the document does, so the number in the
-% second paragraph was assembled as code and only then evaluated.
+% The staging below is 0.0.6's own. \`~( ... )\` and \`&\` are in both grammars;
+% what differs is how a LIBRARY declares its stages -- a whole-file
+% \`@stage:\` header in 0.0.6, a per-binding \`val ~x\` in 0.1 -- and neither is
+% reachable from a single-file document. Compare "Modules, sealing and
+% staging" above: same two sigils, same meaning, the other generation.
 
 @require: stdja-mini
+@require: code
+@require: int
+@require: float
+@require: ordering
 
+% Stage 0: unroll a power into a multiplication chain, so what the document
+% runs is 2 * (2 * ... * 1) as an expression rather than a call to \`pow\`.
 let unrolled =
   ~(
-    let rec pow n = if n <= 0 then &(1) else &( 2 * ~(pow (n - 1)) ) in
+    let-rec pow n = if n <= 0 then &(1) else &( 2 * ~(pow (n - 1)) ) in
     pow 10
   )
 in
+
+let bigger = embed-string (arabic (Int.max 3 9)) in
+let dist = embed-string (arabic (Int.abs (3 - 9))) in
+let verdict = embed-string (Ordering.show (Int.compare 3 9)) in
+let root = embed-string (show-float (Float.abs (0.0 -. 2.5))) in
 let n = embed-string (arabic unrolled) in
 
 document (|
-  title  = {Across the generations},
-  author = {rustyfi},
+  title = {A 0.1 library in a 0.0.6 document};
+  author = {rustyfi};
 |) '<
   +p {
-    This document is read with the SATySFi 0.1 grammar. The comma between
-    the two record fields just above is one place you can see that, since
-    0.0.6 separates them with a semicolon instead. The class that typesets
-    it, \\emph{stdja-mini}, is a 0.0.6 package, and so are the +p and
-    \\bold{emph} commands themselves.
+    \\code(\`Int.max\`); says the larger of 3 and 9 is #bigger;, \\code(\`Int.abs\`);
+    that they are #dist; apart, and \\code(\`Ordering.show\`); prints the result
+    of \\code(\`Int.compare\`); as #verdict;. All four names come out of the 0.1
+    corpus, and the ordering value passed between the last two was built by
+    one 0.1 file and read by another with this 0.0.6 document in between.
   }
   +p {
-    The unrolled power above is 0.1-only staging, and it gives #n;.
+    \\code(\`Float.abs\`); comes from the same place, and gives #root;.
+  }
+  +p {
+    The unrolled power is 0.0.6-side staging, computed one stage before this
+    document ran, and it gives #n;.
   }
 >
 `,
   },
   {
-    name: "0.1 + 0.0.6: a 0.0.6 command in a 0.1 document",
+    name: "0.1 + 0.0.6: a 0.0.6 class and command in a 0.1 document",
     lang: 1,
-    source: `% The other way round from the previous example: here the CLASS is 0.1
-% (v01-mini, from dist-v01/packages/) and one COMMAND comes from 0.0.6 —
-% \\tabular, out of the frozen 0.0.6 standard library's table.satyh, which
-% has no counterpart in the 0.1 corpus at all.
+    source: `% CROSS-VERSION IMPORT. This document is SATySFi 0.1, and THREE FILES IN TWO
+% GENERATIONS end up in one program:
 %
-% Both packages are in one program at once, each read as its own generation.
-% That is the point worth seeing: the boundary is per FILE, not per document,
-% so a 0.1 document does not have to choose a side.
+%   stdja-mini   0.0.6   the document class, and +p and \\emph with it
+%   table        0.0.6   \\tabular, which the 0.1 corpus has no counterpart for
+%   itemize      0.1     the list at the end
 %
-% Everything below the requires is 0.1 surface — commas in list literals,
-% \`match ... end\`, parenthesised command arguments — while the command being
-% called declares its argument types in 0.0.6:
+% Nothing here selects any of that. \`@require: stdja-mini\` is an ordinary
+% require; the loader searches the generation of the file asking -- 0.1, so
+% dist-v01/packages/ first -- and falls back to the other. Check the Packages
+% panel with Lang on 0.1 and neither stdja-mini nor table is in the list;
+% switch to 0.0.6 and both are, while itemize is in BOTH and still resolves to
+% the 0.1 one, because this file asks as 0.1. That fallback IS the bridge.
+%
+% What the port does with it, per file rather than per document: each 0.0.6
+% package is parsed with the 0.0.6 grammar, elaborated under 0.0.6, and its
+% bindings are spliced into the merged program wrapped in a version scope, so
+% \`page-break A4Paper\` inside stdja-mini resolves to 0.0.6's page constructor
+% and 0.0.6's primitive -- while everything below is read as 0.1, and the 0.1
+% itemize is read as 0.1 alongside it. That is the point worth seeing: a 0.1
+% document does not have to choose a side.
+%
+% \\tabular declares its argument types in 0.0.6:
 %
 %   direct \\tabular : [ (| l : inline-text -> cell; ... |) -> (cell list) list;
 %                       length list -> length list -> graphics list ] inline-cmd
 %
 % The record of cell constructors it hands the callback, and the two lists of
-% boundary positions it hands the rule function, cross the boundary as
-% ordinary values; nothing about them is version-forked.
+% boundary positions it hands the rule function, cross as ordinary values;
+% nothing about them is version-forked. Everything at the call site is 0.1
+% surface -- commas in list literals, \`match ... end\`, parenthesised command
+% arguments, \`?(break = true)\` for an option.
+%
+% The staging block proves the rest. \`~( ... )\` and \`&\` run one stage before
+% the document does, so the number in the last paragraph was assembled as code
+% and only then evaluated.
 
-@require: v01-mini
+@require: stdja-mini
 @require: table
+@require: itemize
 
 % The last element of a list, for the table's right-hand edge.
 let rec last d xs =
@@ -1177,9 +1262,10 @@ in
 
 % cs is the record table.satyh passes in: c centres a cell, l left-aligns it.
 let rows cs = [
-  [cs#c({generation}), cs#c({what it supplies})],
-  [cs#l({0.1}),        cs#l({the document class, v01-mini})],
-  [cs#l({0.0.6}),      cs#l({the tabular command, from table})],
+  [cs#c({file}),       cs#c({generation}), cs#c({what it supplies})],
+  [cs#l({stdja-mini}), cs#l({0.0.6}),      cs#l({the document class})],
+  [cs#l({table}),      cs#l({0.0.6}),      cs#l({this very table})],
+  [cs#l({itemize}),    cs#l({0.1}),        cs#l({the list below})],
 ] in
 
 % xs and ys are the column and row boundaries, in the table's own
@@ -1198,13 +1284,45 @@ let rules xs ys =
   hlines ys
 in
 
-let open V01Mini in
-document (| title = \`A 0.0.6 table in a 0.1 document\` |) '<
-  +p { Below, a table drawn entirely by 0.0.6 code: }
+let unrolled =
+  ~(
+    let rec pow n = if n <= 0 then &(1) else &( 2 * ~(pow (n - 1)) ) in
+    pow 10
+  )
+in
+let n = embed-string (arabic unrolled) in
+
+document (|
+  title  = {Across the generations},
+  author = {rustyfi},
+|) '<
+  +p {
+    This document is read with the SATySFi 0.1 grammar. The comma between the
+    two record fields just above is one place you can see that, since 0.0.6
+    separates them with a semicolon instead. The class that typesets it,
+    \\emph{stdja-mini}, is a 0.0.6 package, and so are the block command that
+    opened this paragraph and the \\emph{emphasis} inside it.
+  }
+  +p {
+    Below, a table drawn entirely by 0.0.6 code, called from 0.1 surface:
+  }
   +p {
     \\tabular(rows)(rules);
   }
-  +p { And back to the 0.1 class for this paragraph. }
+  +p {
+    And a list from the 0.1 corpus, inside the 0.0.6 class, in the same
+    document:
+  }
+  +Itemize.listing?(break = true)(Item({}, [
+    Item({one program}, []),
+    Item({two generations}, [
+      Item({resolved per file}, []),
+      Item({not per document}, []),
+    ]),
+  ]));
+  +p {
+    The unrolled power above is 0.1 staging, and it gives #n;.
+  }
 >
 `,
   },
@@ -1233,7 +1351,7 @@ document (| title = \`A 0.0.6 table in a 0.1 document\` |) '<
 % holds for \`font\`, a store abbreviation in one generation and an opaque
 % handle on a loaded face in the other.
 %
-% Contrast stdja-mini two examples up, which crosses cleanly. It calls
+% Contrast stdja-mini in the example just above, which crosses cleanly. It calls
 % \`page-break A4Paper\` too — but it writes no TYPE annotation mentioning
 % \`page\`, so nothing in its text has to be re-read under 0.1's vocabulary
 % and the constructor resolves inside its own version scope. The refusal is

@@ -313,8 +313,8 @@
         reach: a <code>@require:</code> searches its own generation first and
         falls back to the other, so a 0.1 document may use a 0.0.6 package and
         the reverse. That fallback is the port's cross-version bridge, and the
-        last three examples exercise it — including one crossing it refuses,
-        with the reason.
+        last three examples exercise it — one crossing each way, then one
+        crossing it refuses, with the reason.
       </p>
       <div id="pkggroups"></div>
       <p class="fine">
@@ -648,8 +648,8 @@ $("example").addEventListener("change", (e) => {
 });
 
 // A shared document wins over the default example, and takes the picker with
-// it: leaving the picker on "Hello world" while the editor holds something
-// else would misdescribe what is on screen.
+// it: leaving the picker on the first example while the editor holds
+// something else would misdescribe what is on screen.
 const shared = new URLSearchParams(window.location.search).get("src");
 let sharedError = null;
 if (shared) {
@@ -899,7 +899,7 @@ async function typeset() {
 // protocol-free half, plus, for every name this buffer does not itself bind,
 // the `@require:` graph resolved against the corpus baked into the module.
 //
-// WHAT EACH ONE ANSWERS, on the 24 examples this page ships:
+// WHAT EACH ONE ANSWERS, on the 15 examples this page ships:
 //
 //   * hover      — passive, on mouseover. Answers wherever there is anything
 //                  to say and stays silent otherwise, which is the right

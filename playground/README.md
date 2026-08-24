@@ -151,9 +151,9 @@ dependency file, and indexes what each one declares. Hover then answers out of
 the package's own source: which module, how it was written (`direct`, `val`,
 `let-inline`), and the type text its author wrote, quoted rather than inferred.
 
-Measured over the 154 command sites (`\cmd`, `+cmd`) in the 24 examples this
-page ships: **92% get a hover, and 90% of all of them name a package** — that
-is, nearly every hover that answers does so because of the index. **86% of
+Measured over the 255 command sites (`\cmd`, `+cmd`) in the 15 examples this
+page ships: **91% get a hover, and 87% of all of them name a package** — that
+is, nearly every hover that answers does so because of the index. **84% of
 command prefixes offer at least one completion**, against nothing at all before.
 
 It stays honest about what it knows. An index entry proves that a required
@@ -264,15 +264,45 @@ literals, so every SATySFi `\` is written `\\`, every backtick `` \` `` and
 every `${` `\${`. Getting that wrong is silent, which is why the self-test
 compiles all of them.
 
+**There are fifteen examples, and each one does several things.** That is a
+deliberate shape rather than a backlog: a page of single-feature snippets says
+nothing about how the features behave together, which is the only way anybody
+meets them. Where two packages share an example it is because they compose
+there — `railway` and `xpath` both describe shapes, `enumitem` and `figbox`
+both build a document's body — and the commentary at the top of each source
+says what to look for. Between them the examples use every bundled
+third-party package, and the self-test asserts that: a package redistributed
+here with nothing demonstrating it is carrying a licence obligation for
+nothing.
+
+The exception is the Japanese one, which stays narrow on purpose. It is the
+only entry that exercises the abbrev-keyed side of the font store — `stdja`
+asks for `ipaexm` and `ipaexg` by name, which is not the path the three Latin
+style slots take — and the only entry whose selection costs a 5.8 MB download.
+Folding it into a general-purpose example would make every visitor pay for
+that face.
+
+One practical ceiling limits how far a merge can go. Elaboration and
+typechecking recurse over the *merged* program — the document plus every
+package it requires — and wasm frames consume the embedder's native stack,
+which is under a megabyte in node and in a browser alike. Some packages are far
+deeper than others (`latexcmds` and `math` most of all), so what a merge can
+hold is set by the depth of what it pulls in, not by the count: `latexcmds`
+with `figbox` traps where `enumitem` with `figbox` is comfortable. An example
+that dies with `Maximum call stack size exceeded` has hit that, not a bug in
+the document.
+
 Each entry also carries the generation it is written in — `lang: 1` for
 SATySFi 0.1, omitted for 0.0.6, which is the default. Choosing an example moves
 the header's Lang selector to match; moving the selector by hand never rewrites
 the editor, because the selector says how to read what is there rather than
 what should be there. The self-test compiles each example under its own `lang`,
-and separately checks that every 0.1 entry really does *fail* as 0.0.6 — the
-only way to catch a `lang` that has stopped being threaded anywhere. A share
-link carries the generation too, as `&lang=1`, emitted only for 0.1 so that
-every 0.0.6 link ever minted still means what it did.
+and separately checks that every entry really does *fail* under the other
+generation — the only way to catch a `lang` that has stopped being threaded
+anywhere, and, in the 0.0.6 direction, the only thing that makes the omitted
+default a claim rather than a shrug. A share link carries the generation too,
+as `&lang=1`, emitted only for 0.1 so that every 0.0.6 link ever minted still
+means what it did.
 
 One entry carries `refuses`, a regular expression, and is expected NOT to
 compile: it is the cross-version refusal below. The self-test asserts the
@@ -323,9 +353,13 @@ These are properties of a browser build, not of the typesetter:
   expression-level module nor a staged `let`, so those are out of reach here.
   Everything else about staging is not: `&e` and `~e` work in the document
   body, and so does the `code τ` type (`fun (c : code int) -> …` inside a
-  splice), which is what the "0.1: Multi-stage" example does. A library source
-  pasted in is refused clearly — *entry file must be a document (with an
-  `in …` body), found a library*.
+  splice), which is what the "0.1: Modules, sealing and staging" example does.
+  The same two sigils work in a 0.0.6 document, where the difference is again
+  in what a *library* may declare — a whole-file `@stage:` header rather than a
+  per-binding `val ~x` — and the "a 0.1 library in a 0.0.6 document" example
+  stages on that side for the comparison. A library source pasted in is refused
+  clearly — *entry file must be a document (with an `in …` body), found a
+  library*.
 - **Not every cross-version import works** — see below. The ones that do not
   are refused with their reason rather than mis-rendered.
 - **A fixed 32 MiB stack** (`.cargo/config.toml`), because elaboration and
@@ -348,19 +382,23 @@ fallback only ever *adds* resolutions; the self-test pins that in both
 directions, since it is the way this could quietly hand a 0.1 document the
 wrong `itemize`.
 
-The last three examples are this feature:
+The last three examples are this feature — one crossing each way, then one
+that cannot be made:
 
 | example | what crosses |
 |---|---|
-| *a class from the other generation* | the 0.0.6 `stdja-mini` class typesets a 0.1 document, whose body uses 0.1-only staging |
-| *a 0.0.6 command in a 0.1 document* | the 0.1 `v01-mini` class plus `\tabular` from the frozen 0.0.6 `table.satyh` |
+| *a 0.1 library in a 0.0.6 document* | a 0.0.6 document computes with 0.1's `Int`, `Float` and `Ordering`, carrying a 0.1 variant value between two 0.1 files, and stages its own code with 0.0.6's `&`/`~` |
+| *a 0.0.6 class and command in a 0.1 document* | three files in two generations at once: the 0.0.6 `stdja-mini` class, `\tabular` from the frozen 0.0.6 `table.satyh`, and the 0.1 `itemize` — with 0.1-only staging in the body |
 | *a refusal, on purpose* | nothing: `stdjabook`'s type text names `page`, which the two generations represent differently |
 
 Each crossing example requires a package that exists **only** in the other
-corpus, and the self-test checks that as a separate assertion. That is the
-trap worth knowing about here: require a name present in both and the document
-gets its own generation's package, nothing crosses, and the example passes
-while demonstrating nothing.
+corpus, and the self-test checks that as a separate assertion, in both
+directions. That is the trap worth knowing about here: require a name present
+in both and the document gets its own generation's package, nothing crosses,
+and the example passes while demonstrating nothing. The middle example is the
+one that shows the rule doing both things at once — `itemize` exists in both
+corpora and resolves to the 0.1 one because the *asking file* is 0.1, while
+`stdja-mini` and `table` exist only in the 0.0.6 one and fall back to it.
 
 The refusal is worth reading rather than working around. `page` is a nine-
 constructor variant in 0.0.6 and a pair of lengths in 0.1; `font` is a store
