@@ -1425,13 +1425,47 @@ StdJa.document (| title = {t}; author = {a} |) '<
   check("marked is named in its licence notice", (mdNotice ?? "").includes("marked"));
 
   const page = await read("index.html");
-  // Every URL the page loads has to be relative. The two absolute ones it
-  // carries are LINKS a reader may click, not resources it fetches.
-  const fetched = [...page.matchAll(/(?:src|href)="([^"]+)"/g)]
+  // Every URL the page loads has to be relative. The absolute ones it carries
+  // are LINKS a reader may click, not resources it fetches.
+  //
+  // `action` is scanned beside `src`/`href`, and that is a WIDENING rather than
+  // bookkeeping: a form posting off-origin sends the reader's document
+  // somewhere, which is exactly what this check exists to notice, and the old
+  // pattern could not see one at all.
+  const fetched = [...page.matchAll(/(?:src|href|action)="([^"]+)"/g)]
     .map((m) => m[1])
     .filter((u) => /^https?:/.test(u))
-    .filter((u) => !/github\.com|opensource\.org/.test(u));
+    .filter((u) => !/github\.com|opensource\.org/.test(u))
+    // The two LaTeX hand-offs, allowed here because they are click targets —
+    // and held to that by the block below rather than on trust.
+    .filter((u) => !/overleaf\.com|latexonline\.cc/.test(u));
   check("the page fetches nothing from another origin", fetched.length === 0, fetched.join(" "));
+
+  // Those hand-offs SEND THE DOCUMENT off-origin, so they are held to the
+  // Share button's bargain: on a click, never on load, on edit or on typeset.
+  check("the LaTeX hand-offs are click targets, not fetches",
+    !/fetch\(\s*[`'"]https:\/\/(?:www\.)?(?:overleaf\.com|latexonline\.cc)/.test(page),
+    "something requests one of them without a click");
+  check("the hand-offs appear only once a .tex exists",
+    /id="texlinks" hidden/.test(page) && /\$\("texlinks"\)\.hidden = false/.test(page),
+    "a hand-off shown before a compile would send the PREVIOUS document");
+  // Both must name an ENGINE, and it is not a nicety: the generated preamble
+  // refuses pdflatex through `iftex`, so a hand-off without one lands the
+  // reader on a hard `\PackageError` and reads as a broken button.
+  check("the Overleaf hand-off asks for lualatex",
+    /name="engine" value="lualatex"/.test(page),
+    "Overleaf would default to pdflatex, which this preamble refuses");
+  check("the latexonline hand-off asks for lualatex",
+    /latexonline\.cc\/compile\?command=lualatex/.test(page),
+    "latexonline would default to pdflatex, which this preamble refuses");
+  // Overleaf by POST: a `.tex` of any real size does not fit in a URL.
+  check("the Overleaf hand-off posts rather than gets",
+    /action="https:\/\/www\.overleaf\.com\/docs" method="post"/.test(page));
+  // latexonline has only a GET, so an oversized document is refused HERE
+  // rather than turned into a request the server answers with a 414.
+  check("an oversized document disables latexonline instead of 414ing",
+    /LATEXONLINE_MAX_URL/.test(page) && /removeAttribute\("href"\)/.test(page),
+    "the whole document rides in the query string, and servers cap that");
 
   // KaTeX is the ONE off-origin resource, and it is confined to the preview
   // FRAME — it appears in a template string, never in the page's own markup,

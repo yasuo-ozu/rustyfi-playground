@@ -360,6 +360,24 @@ These are properties of a browser build, not of the typesetter:
   to fetch anything else from; the "Packages" panel lists the selected
   generation's set, with each package's upstream, version and licence, and
   both sets together are the exhaustive list (see *Cross-version import*).
+- **The LaTeX tab offers two hand-offs that send your document off-origin.**
+  *open in Overleaf* posts the `.tex` to `overleaf.com` and opens it there as a
+  new project; *latexonline* sends it to `latexonline.cc` and gives back the
+  compiled PDF. They exist because this page cannot compile LaTeX and those
+  services can. **Both go only on a click** — nothing is requested on load, on
+  edit or on typeset, and they do not appear at all until a `.tex` exists. That
+  is the same bargain the Share button makes, and the only other thing on this
+  page that leaves the tab. If the document is confidential, download the `.tex`
+  instead; it is the same bytes.
+
+  Both ask for **lualatex** explicitly (`engine=`, `command=`). That is not a
+  preference: the generated preamble refuses pdflatex through `iftex`, because
+  a rustyfi document reaches for characters outside Latin-1 as a matter of
+  course, so a hand-off without it would land you on a hard error. latexonline
+  compiles from a URL, so the whole document rides in the query string and a
+  large one is refused here rather than turned into a request the server
+  answers with a 414 — the link says so when that happens. Overleaf takes a
+  POST and is unaffected.
 - **The LaTeX tab shows source, and there is no rendering behind a toggle.**
   The other three outputs are all things a browser displays on its own — it
   renders a PDF, it renders HTML, and a Markdown renderer is vendored beside

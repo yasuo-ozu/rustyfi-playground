@@ -270,12 +270,36 @@
      math is the only reading with any meaning and `OutputFormat::Latex` admits
      no mode at all. Hiding beats offering-and-ignoring either way — see
      `syncMathOptions` for the measurement that established that. */
-  .mathpick { display: none; align-items: baseline; gap: 0.3rem; margin-left: 0.6rem;
-    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  /* The caption this label used to carry is gone (see the markup), and with it
+     the declarations that only ever styled it: its own smaller `font-size`,
+     and the `color` it took from the heading anyway. What is left is the box —
+     whether it shows, and where it sits.
+     The `select`'s own `text-transform`/`letter-spacing` resets STAY, and are
+     not leftovers of the caption: they reset `.pane > h2`, which this control
+     sits inside and which sets `uppercase` with wide tracking. Both properties
+     inherit, so dropping them here would render the options as
+     `D E F A U L T   M A T H`. */
+  .mathpick { display: none; align-items: baseline; gap: 0.3rem; margin-left: 0.6rem; }
   body.fmt-markdown .mathpick, body.fmt-html .mathpick { display: inline-flex; }
   .mathpick select { font: inherit; font-size: 0.72rem; text-transform: none; letter-spacing: 0;
     padding: 0.08rem 0.2rem; border: 1px solid var(--line); border-radius: 5px;
     background: var(--panel); color: var(--ink); }
+  /* The two off-origin hand-offs on the LaTeX tab. Styled as links rather than
+     as buttons on purpose: they navigate away, and a pill here would read like
+     the tabs beside them, which do not. `[hidden]` wins over the flex, so the
+     span really is absent until a `.tex` exists. */
+  .texlinks { display: inline-flex; align-items: baseline; gap: 0.5rem; margin-left: 0.4rem; }
+  .texlinks[hidden] { display: none; }
+  .texlinks form { display: inline; margin: 0; }
+  .texlink { font: inherit; font-size: 0.7rem; font-weight: 400;
+    text-transform: none; letter-spacing: 0; padding: 0; border: 0;
+    background: none; color: var(--link, #6b4fd8); cursor: pointer;
+    text-decoration: underline; }
+  .texlink:hover { color: var(--ink); }
+  /* Disabled only ever means "too big for a GET" (latexonline). Say so by
+     looking inert; the `title` carries the reason. */
+  .texlink[aria-disabled="true"] { color: var(--muted); cursor: not-allowed;
+    text-decoration: line-through; }
   .mdtheme { display: none; gap: 0.2rem; margin-left: 0.5rem; }
   body.fmt-markdown .mdtheme { display: inline-flex; }
   .mdt {
@@ -408,16 +432,29 @@
             title="The page-faithful output: real pages, the port's own line breaking.">PDF</button>
           <button class="fmt" data-fmt="html" role="tab" aria-selected="false"
             title="One continuous, self-contained web document — no pages, and the browser does the line breaking.">HTML</button>
+          <!-- "MD", not "Markdown": with a fourth tab beside it the row is
+               wide enough to wrap onto a second line, and `.fmts` wraps rather
+               than scrolls. This is the only label with a shorter form anyone
+               would recognise. `aria-label` keeps the accessible name whole —
+               an abbreviation is a visual economy and must not become one a
+               screen reader has to spell out. -->
           <button class="fmt" data-fmt="markdown" role="tab" aria-selected="false"
-            title="The Markdown, rendered — what a reader of the file would see.">Markdown</button>
+            aria-label="Markdown"
+            title="The Markdown, rendered — what a reader of the file would see.">MD</button>
           <button class="fmt" data-fmt="latex" role="tab" aria-selected="false"
             title="A complete, compilable .tex document — the same structure handed to another typesetter. Shown as source, because compiling LaTeX needs a TeX engine this page does not have.">LaTeX</button>
         </span>
+        <!-- No standing "Math" caption beside the control: the unset option
+             says it instead ("Default Math"), which is the only state where
+             the reader has not already been told what the control is by
+             choosing a value in it. That buys back the width the fourth tab
+             cost. `aria-label` carries the name the caption used to — the
+             wrapper is now empty, so without it the select would have no
+             accessible name at all. -->
         <label class="mathpick" id="mathpick"
           title="How equations are written. Each is right for a different reader; the default follows the format. MathML is the only one the browser lays out itself — real structure a screen reader can read and the browser's find can search, with nothing fetched.">
-          Math
-          <select id="mathmode">
-            <option value="0" selected>Default</option>
+          <select id="mathmode" aria-label="Math">
+            <option value="0" selected>Default Math</option>
             <option value="1">Outlined SVG</option>
             <option value="2">SVG text</option>
             <option value="3" data-md-only="1">Unicode</option>
@@ -432,6 +469,32 @@
           <button class="mdt" data-theme="dark" title="Force the dark rendering.">Dark</button>
           <button class="mdt src" id="mdsrc" aria-pressed="false"
             title="Show the Markdown itself, as the file would be written, instead of the rendering.">Source</button>
+        </span>
+        <!-- Hand the generated `.tex` to a service that can COMPILE it, which
+             this page cannot. Both SEND THE DOCUMENT OFF-ORIGIN, so both are
+             plain click targets that appear only once a `.tex` exists: nothing
+             here is requested on load, on edit, or on typeset. That is the same
+             bargain the Share button makes, and the page says so beside them.
+
+             `engine`/`command` are not optional garnish. The generated preamble
+             refuses pdflatex through `iftex` — a rustyfi document reaches for
+             characters outside Latin-1 as a matter of course — so without them
+             both buttons would land the reader on a hard `\PackageError` and
+             read as broken.
+
+             Overleaf goes by POST because the document travels in the body: a
+             `.tex` of any real size does not fit in a URL. latexonline has only
+             a GET form, so `syncTexLinks` disables it past a length a server
+             will accept rather than emitting a request that fails. -->
+        <span class="texlinks" id="texlinks" hidden>
+          <form id="overleaf" action="https://www.overleaf.com/docs" method="post" target="_blank">
+            <input type="hidden" name="encoded_snip" id="ol-snip">
+            <input type="hidden" name="engine" value="lualatex">
+            <button type="submit" class="texlink"
+              title="Send this .tex to Overleaf and open it there as a new project. It leaves your browser.">open in Overleaf</button>
+          </form>
+          <a id="latexonline" class="texlink" target="_blank" rel="noopener noreferrer"
+            title="Send this .tex to latexonline.cc and get the compiled PDF back. It leaves your browser.">latexonline</a>
         </span>
         <span id="dl"></span>
       </h2>
@@ -916,6 +979,13 @@ async function ensureFontsFor(source) {
 /// through here is what keeps a stale PDF from sitting under a fresh error, or
 /// an error from lingering beside a successful render.
 function showPane(which) {
+  // The two LaTeX hand-offs describe a `.tex` that is on screen. Anything that
+  // replaces the pane — another tab, an error, a fresh page state — invalidates
+  // that, and `showLatexSource` is the one caller that puts them back. Doing it
+  // here rather than in each caller is what stops a failed compile leaving a
+  // button that would post the PREVIOUS document to Overleaf.
+  const links = $("texlinks");
+  if (links) links.hidden = true;
   placeholderEl.style.display = which === "placeholder" ? "grid" : "none";
   // One iframe serves both outputs: a PDF blob the browser's viewer renders,
   // or the HTML document itself.
@@ -1237,6 +1307,50 @@ function showLatexSource(tex) {
   // `text/x-tex` is the registered type and what an editor will recognise;
   // the extension is what a TeX distribution keys on.
   offerDownload(tex, "document.tex", "text/x-tex;charset=utf-8");
+  syncTexLinks(tex);
+}
+
+/// latexonline compiles from a GET, so the whole document rides in the query
+/// string. Servers cap a request line long before a browser does — 8 kB is the
+/// common default (nginx `large_client_header_buffers`, Apache
+/// `LimitRequestLine`) — and past it the reader gets a 414 rather than a PDF.
+///
+/// Measured against the ENCODED length, because that is what is actually sent:
+/// a `.tex` is full of backslashes and braces, every one of which becomes three
+/// characters. The margin covers the origin, the path and `command=lualatex`.
+const LATEXONLINE_MAX_URL = 7500;
+
+/// Point both hand-offs at the current `.tex`, and reveal them.
+///
+/// Overleaf takes a POST, so size is not a concern there and its field is set
+/// unconditionally. `encoded_snip` wants the source URL-ENCODED as the
+/// parameter's value (its sibling `snip` is the raw form, documented for
+/// server-side and AJAX callers rather than for a browser form post).
+///
+/// latexonline is disabled rather than hidden when the document is too big:
+/// hiding it would read as "this tab has one hand-off", and the reason a
+/// reader wants is *why this document* cannot use it.
+function syncTexLinks(tex) {
+  $("ol-snip").value = encodeURIComponent(tex);
+  const href = `https://latexonline.cc/compile?command=lualatex&text=${encodeURIComponent(tex)}`;
+  const a = $("latexonline");
+  if (href.length <= LATEXONLINE_MAX_URL) {
+    a.href = href;
+    a.removeAttribute("aria-disabled");
+    a.title =
+      "Send this .tex to latexonline.cc and get the compiled PDF back. " +
+      "It leaves your browser.";
+  } else {
+    // No `href` at all: an anchor without one is not focusable and cannot be
+    // followed, so this cannot be clicked into a request that would 414.
+    a.removeAttribute("href");
+    a.setAttribute("aria-disabled", "true");
+    a.title =
+      `This document is too large for latexonline, which compiles from a URL ` +
+      `(${href.length} characters encoded, and a server will refuse past about ` +
+      `${LATEXONLINE_MAX_URL}). Overleaf takes a POST and is unaffected.`;
+  }
+  $("texlinks").hidden = false;
 }
 
 /// The "— download" affordance the four renderers share. For the PDF it is

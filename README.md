@@ -30,12 +30,17 @@ which a detached editor buffer cannot. See
 [Live diagnostics](playground/README.md#live-diagnostics) and
 [Editor navigation](playground/README.md#editor-navigation).
 
-The one exception is deliberate and opt-in: the **Share** button builds a URL
-that carries your document, and shortening that URL hands it to a third-party
-shortener ([TinyURL](https://tinyurl.com/), falling back to
-[da.gd](https://da.gd/) and [is.gd](https://is.gd/)). Nothing calls out on load
-or on edit — only on that
-click, and the page says so next to the button.
+The exceptions are deliberate and opt-in, and there are two. The **Share**
+button builds a URL that carries your document, and shortening that URL hands
+it to a third-party shortener ([TinyURL](https://tinyurl.com/), falling back to
+[da.gd](https://da.gd/) and [is.gd](https://is.gd/)). On the LaTeX tab, **open
+in Overleaf** and **latexonline** hand the generated `.tex` to a service that
+can compile it, which this page cannot —
+[Overleaf](https://www.overleaf.com/) opens it as a new project,
+[latexonline](https://latexonline.cc/) returns the PDF. Nothing calls out on
+load, on edit or on typeset — only on those clicks, the page says so beside
+each, and the LaTeX hand-offs do not appear until a `.tex` exists. Want none of
+it? The *download* link gives you the same bytes.
 
 Live at <https://yasuo-ozu.github.io/rustyfi-playground/>.
 
