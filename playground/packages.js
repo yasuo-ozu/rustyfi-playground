@@ -122,6 +122,59 @@ export const PACKAGE_SETS = [
   },
 ];
 
+/// The FONTS the page serves, on the same terms as the packages above: a font
+/// file is third-party redistribution too, and a licence has to travel with it.
+///
+/// Neither is linked into the module — the `.wasm` is already 7.5 MB and a
+/// face is not compiler code. `lazy` says which one is fetched on load and
+/// which only when a document needs it; see `loadCjkFont` in `index.html` for
+/// what "needs it" means.
+///
+/// `licenseHref` points into `fonts/`, not `licenses/`, and that is deliberate:
+/// `download-fonts.sh` installs each face and its licence text side by side and
+/// `pages.yml` copies the pair in one step, so neither can be deployed without
+/// the other. For the IPAex face the adjacency IS the licence term — IPA Font
+/// License 1.0 Article 3 Paragraph 2 permits redistributing the font verbatim
+/// provided its name is unchanged (3.2(1)), the file is unmodified (3.2(2))
+/// and "a copy of this Agreement" is attached to it (3.2(3)); serving it from
+/// a website is "public transmission", which Article 2 Paragraph 6 grants in
+/// so many words. So: do not rename `ipaexg.ttf`, do not subset the file the
+/// page SERVES, and do not separate it from its agreement. Subsetting it into
+/// a generated PDF is a different act, and Article 2 Paragraph 5 puts no
+/// further obligation on whoever downloads one.
+export const FONTS = [
+  {
+    name: "Junicode",
+    file: "Junicode.ttf",
+    bytes: 841688,
+    lazy: false,
+    role: "Latin",
+    repo: "https://junicode.sourceforge.net/",
+    version: "1.002",
+    license: "SIL OFL 1.1",
+    licenseHref: "./fonts/LICENSE-Junicode-OFL.txt",
+    what:
+      "A medievalist's serif with a wide Latin repertoire. The page's default " +
+      "face, and the one the typesetter's own layout tests are measured against.",
+  },
+  {
+    name: "IPAexGothic",
+    file: "ipaexg.ttf",
+    bytes: 6099900,
+    lazy: true,
+    role: "Japanese",
+    repo: "https://moji.or.jp/ipafont/",
+    version: "IPAexfont00401",
+    license: "IPA Font License 1.0",
+    licenseHref: "./fonts/IPA_Font_License_Agreement_v1.0.txt",
+    what:
+      "Fetched only when the document contains Japanese, because it is seven " +
+      "times the size of Junicode. It answers to both abbrevs the bundled " +
+      "classes ask for — ipaexm in body text, ipaexg in headings — so a " +
+      "Japanese document renders in one weight rather than in .notdef.",
+  },
+];
+
 /// The 0.1 corpus, which is a different set of packages under the same flat
 /// names — `math`, `itemize`, `list` and friends exist in both generations with
 /// genuinely different APIs. Kept in its own table rather than as another

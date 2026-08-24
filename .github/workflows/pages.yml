@@ -73,12 +73,14 @@ jobs:
       - name: Build
         run: cargo build -p rustyfi-wasm --release --target wasm32-unknown-unknown
 
-      # Junicode, fetched through the submodule's own pinned script rather than
-      # a URL duplicated here, so the font and its hash stay defined in one
-      # place. OFL 1.1 §2 requires the licence to travel with the font, and
-      # Junicode's own archive ships none — the script writes the text, so both
-      # files are copied together or neither is.
-      - name: Fetch the bundled font
+      # Junicode and IPAexGothic, fetched through the submodule's own pinned
+      # script rather than URLs duplicated here, so each font and its digest
+      # stay defined in one place. Both licences require the text to travel
+      # with the font — OFL 1.1 §2 for Junicode, whose own archive ships none
+      # (the script writes it), and IPA Font License 1.0 Article 3 Paragraph
+      # 2(3) for IPAex, whose archive does — so each pair is copied together
+      # below, or neither file is.
+      - name: Fetch the bundled fonts
         run: sh rustyfi/download-fonts.sh
 
       - name: Assemble the site
@@ -93,6 +95,16 @@ jobs:
           cp target/wasm32-unknown-unknown/release/rustyfi_wasm.wasm _site/
           cp rustyfi/lib-rustyfi/dist/fonts/Junicode.ttf _site/fonts/
           cp rustyfi/lib-rustyfi/dist/fonts/LICENSE-Junicode-OFL.txt _site/fonts/
+          # The Japanese face, VERBATIM and under its own name. IPA Font
+          # License 1.0 Article 2 Paragraph 6 permits redistribution by public
+          # transmission; Article 3 Paragraph 2 attaches three conditions, and
+          # this line is where two of them are met — (1) the name is unchanged
+          # and (2) the file is unmodified — with (3) met by the licence copied
+          # beside it. Do not rename it, do not subset it, do not separate the
+          # two. (Subsetting it INTO a generated PDF is a different act, and
+          # Article 2 Paragraph 5 covers that.)
+          cp rustyfi/lib-rustyfi/dist/fonts/ipaexg.ttf _site/fonts/
+          cp rustyfi/lib-rustyfi/dist/fonts/IPA_Font_License_Agreement_v1.0.txt _site/fonts/
           # The module bakes in third-party SATySFi packages, so their licence
           # texts have to travel with the site the same way the font's does.
           # Each package's own file is committed here; the LGPL/GPL pair comes

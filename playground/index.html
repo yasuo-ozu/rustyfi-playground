@@ -282,7 +282,7 @@
   <label for="example">Example</label>
   <select id="example"></select>
 
-  <label class="filebtn" title="Overrides the bundled Junicode, and unlocks non-Latin text. The file is read in this tab and is never uploaded.">
+  <label class="filebtn" title="Overrides both bundled faces — Latin and Japanese alike — so a face of your own is used for every script. The file is read in this tab and is never uploaded.">
     <input type="file" id="font" accept=".ttf,.otf,font/ttf,font/otf">
     <span id="fontlabel">Loading font…</span>
   </label>
@@ -330,6 +330,12 @@
         <a href="./licenses/LICENSE.GPL-3.0.txt">GPL-3.0</a> by reference, so
         that text is here too.
       </p>
+      <p class="fine">
+        The two fonts at the end of the list are redistributed on the same
+        terms, verbatim and unmodified, each beside its own licence. The
+        Japanese one is not downloaded until a document actually contains
+        Japanese, so a Latin-only session never pays for it.
+      </p>
     </div>
   </details>
 
@@ -369,7 +375,7 @@
 import { instantiateFromUrl } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
 import { decodeSource, encodeSource, shareUrl, shareLang, shorten, SHORTENER_MAX_URL } from "./share.js";
-import { groupPackages } from "./packages.js";
+import { groupPackages, FONTS } from "./packages.js";
 // CodeMirror 6, VENDORED: `playground/vendor/codemirror.js` is committed to
 // this repository and served from this origin, because the page fetches
 // nothing at runtime — no CDN, no external stylesheet, no remote font. It is
@@ -408,6 +414,21 @@ const SHORTENED_BY = "Shortened by a third-party service, which received this li
 
 let rustyfi = null;
 let fontBytes = null;
+/// The Japanese face, fetched on demand — see `loadCjkFont`. Distinct from
+/// `fontBytes` because the two fill different roles in the store: `fontBytes`
+/// is the three style slots, this is the ABBREVS (`ipaexm`, `ipaexg`) that a
+/// document names.
+let cjkBytes = null;
+/// Set once a CJK fetch has failed, so a document full of Japanese does not
+/// re-download five megabytes on every keystroke-triggered typeset.
+let cjkFailed = false;
+/// True once the visitor supplies their own face. It then fills BOTH roles,
+/// which is what the file picker has always promised ("unlocks non-Latin
+/// text") and what it already did — before this, EVERY abbrev fell through to
+/// the single uploaded face. Keeping that means an uploaded Japanese font
+/// still sets Japanese, and it is why the bundled face is not fetched over the
+/// top of one.
+let fontUploaded = false;
 let blobUrl = null;
 
 /// The editor, once it exists.
@@ -472,6 +493,24 @@ function renderPackages(names, lang) {
       }),
       chipList(drift)));
   }
+  // The fonts sit in the same panel and under the same rule: they are
+  // third-party files this site redistributes, so each one's licence is named
+  // and linked next to it. Not part of `groupPackages` — a font is not a
+  // `@require:`able name and has no prefix to key on.
+  sections.push(...FONTS.map((font) => {
+    const head = el("h3", {}, el("a", { href: font.repo, textContent: font.name }));
+    head.append(el("span", { className: "ver", textContent: font.version }));
+    head.append(el("a", {
+      className: "lic", href: font.licenseHref, textContent: font.license,
+    }));
+    const size = `${(font.bytes / 1024 / 1024).toFixed(1)} MB`;
+    const when = font.lazy ? "fetched on demand" : "fetched on load";
+    return el("section", { className: "grp" },
+      head,
+      el("p", { className: "what", textContent: font.what }),
+      chipList([`${font.role} · ${size} · ${when}`]));
+  }));
+
   $("pkggroups").replaceChildren(...sections);
   $("pkgcount").textContent = `(${names.length})`;
 }
@@ -607,6 +646,10 @@ $("example").addEventListener("change", (e) => {
   // A whole new document: whatever was said about the old one is now about
   // nothing. Re-run at once rather than on the debounce — this is a click.
   analyseNow();
+  // Start the Japanese face downloading now if this document will want it,
+  // rather than at the click that follows: the fetch overlaps with reading the
+  // source, and `typeset` awaits the same promise if it is still in flight.
+  ensureFontsFor(getDoc());
 });
 
 // A shared document wins over the default example, and takes the picker with
@@ -641,6 +684,9 @@ $("font").addEventListener("change", async (e) => {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
   fontBytes = new Uint8Array(await file.arrayBuffer());
+  // Both roles, as before this file had two. See `fontUploaded`.
+  cjkBytes = fontBytes;
+  fontUploaded = true;
   $("fontlabel").textContent = `Font: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
 });
 
@@ -662,6 +708,98 @@ async function loadBundledFont() {
     $("fontlabel").textContent =
       "No bundled font (base-14 only) — pick one from your machine…";
   }
+}
+
+// ---------------------------------------------------------------------------
+// THE JAPANESE FACE, FETCHED ON DEMAND
+//
+// IPAexGothic is 5.8 MB — seven Junicodes. Measured against this page as it
+// stands, fetching it unconditionally would take a session from 8.8 MB to
+// 14.6 MB over the wire, and, because a TTF's glyf table compresses far worse
+// than wasm does, from 2.5 MB to 6.5 MB GZIPPED: two and a half times the
+// download, for a face 26 of the 27 examples never touch. So it is fetched
+// when a document actually contains Japanese, and not before.
+//
+// Detection is on the SOURCE rather than on a failed render, because there is
+// no failure to react to: a missing CJK abbrev resolves onto the Latin face
+// and the document typesets successfully, in .notdef. That silence is the
+// whole bug, and it is why this cannot be a retry.
+//
+// Gothic and not Mincho, though `stdja` sets body text in Mincho: one fetched
+// face has to serve both abbrevs, and this one is 1.65 MB smaller (5.8 vs 7.5)
+// and holds together better at the size a browser's PDF viewer shows. The cost
+// is that section headings, which want Gothic, no longer differ from the body,
+// which wants Mincho.
+// ---------------------------------------------------------------------------
+
+/// The two CJK buckets `rustyfi_backend::char_script` recognises — Kana, and
+/// everything it calls HanIdeographic, which includes CJK punctuation and the
+/// fullwidth forms. Mirrored from that function rather than invented, so the
+/// page fetches a face exactly when the typesetter would look for one.
+///
+/// Written as escapes, not as literal characters: a range whose endpoints are
+/// invisible or unfamiliar glyphs is a range nobody can review.
+const CJK = new RegExp(
+  "[\\u3000-\\u303F" + // CJK symbols and punctuation, and the ideographic space
+  "\\u3040-\\u30FF" +  // Hiragana and Katakana
+  "\\u31F0-\\u31FF" +  // Katakana phonetic extensions
+  "\\u3400-\\u4DBF" +  // CJK Unified Ideographs Extension A
+  "\\u4E00-\\u9FFF" +  // CJK Unified Ideographs
+  "\\uF900-\\uFAFF" +  // CJK Compatibility Ideographs
+  "\\uFF00-\\uFFEF]" + // Halfwidth and fullwidth forms
+  "|[\\u{20000}-\\u{2FA1F}]", // Extension B and beyond
+  "u",
+);
+
+const hasCjk = (source) => CJK.test(source);
+
+/// The in-flight fetch, so a prefetch and the Typeset that follows it share
+/// one download rather than starting five megabytes twice.
+let cjkPending = null;
+
+/// Fetch the Japanese face, at most once. Resolves to `true` when one is
+/// available afterwards.
+///
+/// Not fatal on failure: the document still typesets, in .notdef, which is
+/// what it did before this existed — so the page says what happened and
+/// carries on rather than refusing to render at all.
+function loadCjkFont() {
+  if (cjkBytes !== null) return Promise.resolve(true);
+  if (cjkFailed) return Promise.resolve(false);
+  if (cjkPending) return cjkPending;
+  statusEl.className = "";
+  statusEl.textContent = "loading Japanese font (5.8 MB)…";
+  cjkPending = (async () => {
+    try {
+      const res = await fetch("./fonts/ipaexg.ttf");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      cjkBytes = new Uint8Array(await res.arrayBuffer());
+      const mb = ((fontBytes?.length ?? 0) + cjkBytes.length) / 1024 / 1024;
+      $("fontlabel").textContent =
+        `Font: Junicode + IPAexGothic (bundled, ${mb.toFixed(1)} MB) — or pick your own…`;
+      return true;
+    } catch (e) {
+      cjkFailed = true;
+      showToast(
+        `Could not load the Japanese font (${e && e.message ? e.message : e}) — ` +
+        "Japanese text will render as blank boxes.",
+      );
+      return false;
+    } finally {
+      cjkPending = null;
+    }
+  })();
+  return cjkPending;
+}
+
+/// Make sure the faces this document needs are in hand, before a compile.
+///
+/// Returns nothing and never throws: a font that cannot be fetched is a
+/// degraded render, not a failed one.
+async function ensureFontsFor(source) {
+  // An uploaded face fills both roles and is not second-guessed.
+  if (fontUploaded) return;
+  if (hasCjk(source)) await loadCjkFont();
 }
 
 /// The right pane shows exactly one of these at a time. Routing every change
@@ -728,9 +866,16 @@ formatEl.addEventListener("change", () => {
   if (previewEl.style.display !== "none") typeset();
 });
 
-function typeset() {
+async function typeset() {
   if (!rustyfi) return;
   compileBtn.disabled = true;
+  statusEl.className = "";
+  statusEl.textContent = "typesetting…";
+
+  // Before the frame yield, and awaited: a Japanese document typeset without
+  // its face renders successfully and blank, so there is nothing to fall back
+  // to afterwards. `ensureFontsFor` writes its own status while it downloads.
+  await ensureFontsFor(getDoc());
   statusEl.className = "";
   statusEl.textContent = "typesetting…";
 
@@ -740,8 +885,8 @@ function typeset() {
     const started = performance.now();
     const html = currentFormat() === "html";
     const result = html
-      ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang())
-      : rustyfi.compile(getDoc(), fontBytes, currentLang());
+      ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes)
+      : rustyfi.compile(getDoc(), fontBytes, currentLang(), cjkBytes);
     const ms = Math.round(performance.now() - started);
     if (result.ok) {
       const size = html ? new TextEncoder().encode(result.html).length : result.pdf.length;
@@ -1331,7 +1476,7 @@ try {
       "example is loaded instead.",
     );
   }
-  typeset();
+  await typeset();
   // The editor's linter is already scheduled from the moment it was created,
   // but at that point there was no module for it to ask, so it answered
   // nothing. Now there is one.
