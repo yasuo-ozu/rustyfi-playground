@@ -259,6 +259,18 @@
   }
   .fmt:hover { color: var(--ink); }
   .fmt.sel { background: var(--ink); border-color: var(--ink); color: var(--panel); }
+  /* Only meaningful for the RENDERED Markdown tab: the source tab is text on
+     this page and already follows the page's own theme, and the PDF and HTML
+     tabs carry their own. `body.fmt-markdown` is set by the tab handler. */
+  .mdtheme { display: none; gap: 0.2rem; margin-left: 0.5rem; }
+  body.fmt-markdown .mdtheme { display: inline-flex; }
+  .mdt {
+    font: inherit; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 0.12rem 0.45rem; border: 1px solid var(--line); border-radius: 99px;
+    background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .mdt:hover { color: var(--ink); }
+  .mdt.sel { border-color: var(--ink); color: var(--ink); font-weight: 600; }
   /* The Markdown source: on this page, not in the frame, because it is what
      you would copy. Wraps rather than scrolls horizontally — a drawing's
      `<svg>` is one very long line, and a horizontal scrollbar for it would
@@ -383,6 +395,12 @@
           <button class="fmt" data-fmt="markdown-src" role="tab" aria-selected="false"
             title="The Markdown itself, as the file would be written.">Markdown Source</button>
         </span>
+        <span class="mdtheme" id="mdtheme" role="group" aria-label="Markdown preview theme">
+          <button class="mdt sel" data-theme="auto"
+            title="Follow your system's light/dark setting, which is what a reader of this file would get.">Auto</button>
+          <button class="mdt" data-theme="light" title="Force the light rendering.">Light</button>
+          <button class="mdt" data-theme="dark" title="Force the dark rendering.">Dark</button>
+        </span>
         <span id="dl"></span>
       </h2>
       <div class="empty" id="placeholder">Nothing typeset yet.</div>
@@ -425,6 +443,13 @@ const previewEl = $("preview");
 /// formats sit above the preview, where what you are looking at is named by
 /// the control that chose it.
 let format = "pdf";
+
+/// The rendered-Markdown preview's colour scheme: "auto" (follow the reader's
+/// system, which is what a reader of the file would get), "light" or "dark".
+/// Separate from the page's own theme on purpose — the frame is standing in
+/// for someone else's Markdown reader, and you may well want to check the
+/// output against the scheme you are NOT currently using.
+let mdTheme = "auto";
 /// `"pdf"` or `"html"` — which serialization the Typeset button produces.
 const currentFormat = () => format;
 const placeholderEl = $("placeholder");
@@ -896,6 +921,19 @@ const MARKDOWN_CSS = `
 @media (prefers-color-scheme: dark) {
   :root { --fg:#e6e6e6; --bg:#161616; --mut:#9a9a9a; --bd:#3a3a3a; --sub:#1f2430; }
 }
+/* An explicit choice from the toggle, which must win in BOTH directions —
+   forcing light on a dark system needs a rule as much as the reverse does, so
+   both are stated rather than relying on the cascade to undo the media query.
+   color-scheme moves with them, or the frame's own scrollbars and form
+   controls stay in the system's palette and the preview looks half-themed. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --fg:#1a1a1a; --bg:#fff; --mut:#666; --bd:#d8d8d8; --sub:#f6f8fa;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --fg:#e6e6e6; --bg:#161616; --mut:#9a9a9a; --bd:#3a3a3a; --sub:#1f2430;
+}
 body {
   margin: 0; padding: 1.6rem 1.4rem 4rem; max-width: 46rem;
   background: var(--bg); color: var(--fg); line-height: 1.75;
@@ -919,6 +957,8 @@ li { margin: .15rem 0; }
 hr { border: none; border-top: 1px solid var(--bd); margin: 1.8rem 0; }
 a { color: #1a5fb4; }
 @media (prefers-color-scheme: dark) { a { color: #7aa8e8; } }
+:root[data-theme="light"] a { color: #1a5fb4; }
+:root[data-theme="dark"] a { color: #7aa8e8; }
 /* A drawing arrives as an inline <svg> and must not overflow the column. */
 img, svg { max-width: 100%; height: auto; }
 `;
@@ -933,9 +973,18 @@ img, svg { max-width: 100%; height: auto; }
 /// `marked` is given the compiler's output, not a reader's input: the raw
 /// `<svg>` a drawing becomes has to survive, and sanitising it away would
 /// silently drop every figure.
+/// The last Markdown the compiler produced, so the theme toggle can re-render
+/// the SAME document instead of starting a fresh typeset. Switching a preview's
+/// colours is not a reason to re-run the typesetter, and on a large document
+/// the difference is a visible stall.
+let lastMarkdown = null;
+
 function showMarkdown(md) {
+  lastMarkdown = md;
   const page =
-    "<!doctype html><meta charset=utf-8>" +
+    "<!doctype html>" +
+    (mdTheme === "auto" ? "<html>" : `<html data-theme="${mdTheme}">`) +
+    "<meta charset=utf-8>" +
     "<meta name=viewport content='width=device-width, initial-scale=1'>" +
     "<style>" + MARKDOWN_CSS + "</style>" +
     // No closing tag: it is optional in HTML, and a literal "</body>" inside a
@@ -973,10 +1022,25 @@ function offerDownload(data, name, type) {
   $("dl").append("— ", a);
 }
 
+document.querySelectorAll(".mdt").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (b.dataset.theme === mdTheme) return;
+    mdTheme = b.dataset.theme;
+    document.querySelectorAll(".mdt").forEach((x) => x.classList.toggle("sel", x === b));
+    // Re-render what is already there. No compile: the Markdown does not
+    // depend on the colour scheme, and re-running the typesetter to recolour a
+    // preview would be a visible stall on a large document.
+    if (lastMarkdown !== null && format === "markdown") showMarkdown(lastMarkdown);
+  });
+});
+
 document.querySelectorAll(".fmt").forEach((b) => {
   b.addEventListener("click", () => {
     if (b.dataset.fmt === format) return;
     format = b.dataset.fmt;
+    // Drives `.mdtheme`'s visibility: the toggle means nothing on the other
+    // three tabs.
+    document.body.classList.toggle("fmt-markdown", format === "markdown");
     document.querySelectorAll(".fmt").forEach((x) => {
       const on = x === b;
       x.classList.toggle("sel", on);

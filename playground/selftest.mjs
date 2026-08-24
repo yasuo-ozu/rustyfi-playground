@@ -1445,6 +1445,30 @@ StdJa.document (| title = {t}; author = {a} |) '<
     `${(page.match(/class="fmt[ "]/g) ?? []).length} tabs, dropdown ${/id="format"/.test(page)}`);
   check("the header no longer names a font", !/id="fontlabel"/.test(page));
 
+  // The Markdown preview's light/dark toggle. The frame is standing in for
+  // someone else's Markdown reader, so an explicit choice has to beat the
+  // reader's own `prefers-color-scheme` — which needs a rule in BOTH
+  // directions, not just a dark one.
+  check("the Markdown preview has a theme toggle", /class="mdt"/.test(page));
+  for (const th of ["auto", "light", "dark"]) {
+    check(`the theme toggle offers ${th}`, new RegExp(`data-theme="${th}"`).test(page));
+  }
+  check(
+    "an explicit theme overrides the system preference in both directions",
+    /:root\[data-theme="light"\]/.test(page) && /:root\[data-theme="dark"\]/.test(page),
+    "only one direction is stated, so forcing light on a dark system will not work",
+  );
+  check(
+    "the forced theme also moves color-scheme",
+    /\[data-theme="dark"\][^}]*color-scheme:\s*dark/s.test(page),
+    "without it the frame's scrollbars stay in the system palette",
+  );
+  check(
+    "the toggle is scoped to the rendered-Markdown tab",
+    /body\.fmt-markdown \.mdtheme/.test(page),
+    "it would otherwise show on tabs where it means nothing",
+  );
+
   // Every module the page imports has to be one the deploy cache-busts.
   //
   // `.github/workflows/pages.yml` stamps the commit onto a fixed LIST of
