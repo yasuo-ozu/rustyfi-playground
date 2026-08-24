@@ -81,7 +81,7 @@
        overflows the viewport instead of filling it. */
     flex: 1; display: flex; flex-direction: column; min-height: 0;
   }
-  select, button, .filebtn, .pop > summary {
+  select, button, .pop > summary {
     font: inherit; font-size: 0.88rem;
     padding: 0.4rem 0.7rem;
     border: 1px solid var(--line); border-radius: 7px;
@@ -92,7 +92,6 @@
     border-color: transparent; font-weight: 600;
   }
   button[disabled] { opacity: 0.55; cursor: progress; }
-  .filebtn input { display: none; }
 
   /* The packages list is long, so it lives in a disclosure that opens OVER the
      page rather than pushing the editor down — the header has to stay one
@@ -282,10 +281,7 @@
   <label for="example">Example</label>
   <select id="example"></select>
 
-  <label class="filebtn" title="Overrides the bundled Junicode, and unlocks non-Latin text. The file is read in this tab and is never uploaded.">
-    <input type="file" id="font" accept=".ttf,.otf,font/ttf,font/otf">
-    <span id="fontlabel">Loading font…</span>
-  </label>
+  <span class="ctl" id="fontlabel" title="The face this page typesets in. Bundled and served beside the module; nothing is uploaded.">Loading font…</span>
 
   <label class="ctl" title="Which SATySFi generation to compile as. Each has its own package corpus.">
     Lang
@@ -637,30 +633,23 @@ if (shared) {
   selectLang(EXAMPLES[0].lang ?? 0);
 }
 
-$("font").addEventListener("change", async (e) => {
-  const file = e.target.files && e.target.files[0];
-  if (!file) return;
-  fontBytes = new Uint8Array(await file.arrayBuffer());
-  $("fontlabel").textContent = `Font: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
-});
-
 // Junicode is served beside the module so the page typesets properly on first
 // load: without a real face the built-in base-14 fonts cannot encode so much as
 // the em-dash `stdjabook` emits, and every example needing one would open
 // broken. Fetched rather than linked into the `.wasm` because it is a megabyte
-// the module would otherwise carry on every load, and because an uploaded font
-// has to override it anyway. A failure here is not fatal — the page still runs
-// on base-14, and says so.
+// the module would otherwise carry on every load. A failure here is not fatal —
+// the page still runs on base-14, and says so, though most examples need a real
+// face and will report an encoding error instead of rendering.
 async function loadBundledFont() {
   try {
     const res = await fetch("./fonts/Junicode.ttf");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     fontBytes = new Uint8Array(await res.arrayBuffer());
     $("fontlabel").textContent =
-      `Font: Junicode (bundled, ${(fontBytes.length / 1024 / 1024).toFixed(1)} MB) — or pick your own…`;
+      `Font: Junicode (bundled, ${(fontBytes.length / 1024 / 1024).toFixed(1)} MB)`;
   } catch (e) {
     $("fontlabel").textContent =
-      "No bundled font (base-14 only) — pick one from your machine…";
+      "No bundled font — base-14 only, so most examples will not render";
   }
 }
 
