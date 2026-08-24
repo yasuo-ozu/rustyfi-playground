@@ -11,6 +11,15 @@
 // without a font and to succeed with one, and the self-test checks both
 // directions.
 //
+// `needsCjk` marks the ones that additionally need the JAPANESE face, and it
+// is a stronger claim than `needsFont`: an example that needs a font FAILS
+// without one, but an example that needs the CJK face SUCCEEDS without it and
+// draws nothing, because a font with no glyph for 日 renders .notdef rather
+// than refusing. The self-test therefore checks the rendered PDF for these
+// rather than checking that they compiled — see its section 7b, which also
+// keeps the without-CJK control, so a check that stopped discriminating would
+// be caught rather than staying quietly green.
+//
 // `lang` is the SATySFi generation the source is written in — `0` for 0.0.6
 // and `1` for 0.1 — and is OMITTED wherever it is 0, which is the default and
 // what every example here predates. It is not decoration: the two generations
@@ -237,6 +246,51 @@ document (|
     +p {
       The full stdja class gives you sections, a title block and running
       page furniture.
+    }
+  >
+>
+`,
+  },
+  {
+    name: "Japanese (stdja, needs a font)",
+    needsFont: true,
+    needsCjk: true,
+    source: `@require: stdja
+
+% SATySFi is a Japanese typesetter, and this is what it was built for: mixed
+% Japanese and Latin, with the inter-script spacing and the line breaking
+% handled rather than left to luck.
+%
+% The Japanese face (IPAexGothic, 5.8 MB) is fetched the first time a document
+% contains Japanese — not on page load, because most documents here do not.
+% Watch the status line the first time you typeset this one.
+%
+% \\emph switches to a gothic face for CJK, so it stands out from the mincho
+% body the way italic does in Latin text. Here both are the same file, since
+% the page fetches one face and answers to both names with it.
+
+document (|
+  title = {日本語の組版};
+  author = {rustyfi};
+  show-title = true;
+  show-toc = false;
+|) '<
+  +section { はじめに } <
+    +p {
+      これは日本語の文書です。SATySFi は組版処理システムであり、
+      \\emph{行分割}や\\emph{文字間の調整}を自動で行います。
+    }
+    +p {
+      Latin と日本語が同じ段落に混ざる場合、その境目には自然な空きが
+      入ります — for example, the word \\emph{typesetting} sits inside
+      Japanese text with a quarter-em on either side, which is JLreq's
+      rule and not a space anybody typed.
+    }
+  >
+  +section { 引用 } <
+    +p {
+      吾輩は猫である。名前はまだ無い。どこで生れたかとんと見当がつかぬ。
+      何でも薄暗いじめじめした所でニャーニャー泣いていた事だけは記憶している。
     }
   >
 >

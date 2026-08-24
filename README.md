@@ -102,9 +102,19 @@ MIT, matching rustyfi's own Rust crates.
 The SATySFi packages the module bundles are **not** MIT-by-default and are not
 this project's to relicense. Each one's upstream licence was established from
 its own repository, its licence text is committed under `playground/licenses/`,
-and the deploy serves that text beside the page — the way the bundled font
-ships with its OFL. `crates/rustyfi-wasm/build.rs` refuses to bake in a package
+and the deploy serves that text beside the page — the way each bundled font
+ships with its own. `crates/rustyfi-wasm/build.rs` refuses to bake in a package
 whose licence file is missing, so the two cannot drift apart.
+
+The **fonts** are the same obligation in a different directory: they are
+fetched by the deploy rather than committed, so each face and its licence text
+are copied into `_site/fonts/` in one step and `playground/selftest.mjs` fails
+if a face arrives without one. Both licences require exactly that adjacency —
+OFL 1.1 §2, and IPA Font License 1.0 Article 3 Paragraph 2(3). The IPAex face
+is served **verbatim, unmodified and under its own file name**, which is what
+Article 3 Paragraph 2(1)–(2) require of a redistribution; Article 2 Paragraph 6
+is the grant that makes serving it from a website permitted at all, and
+Article 2 Paragraph 5 covers the subset that ends up inside a PDF you download.
 
 | Bundled | Origin | Licence |
 |---|---|---|
@@ -113,6 +123,8 @@ whose licence file is missing, so the two cannot drift apart.
 | `easytable`, `enumitem`, `figbox`, `railway`, `class-slydifi` | [monaqa](https://github.com/monaqa) | MIT |
 | `latexcmds`, `xpath` | [yasuo-ozu](https://github.com/yasuo-ozu) | LGPL-3.0 |
 | CodeMirror 6 (the editor, `playground/vendor/`) | [codemirror](https://github.com/codemirror) | MIT |
+| Junicode 1.002 (Latin face) | [junicode](https://junicode.sourceforge.net/) | SIL OFL 1.1 |
+| IPAexGothic 004.01 (Japanese face) | [IPA](https://moji.or.jp/ipafont/) | IPA Font License 1.0 |
 
 Two projects from rustyfi's layout-test corpus are **deliberately not bundled**:
 `fss`, whose upstream repository ships no licence text (its `satysfi-fss.opam`

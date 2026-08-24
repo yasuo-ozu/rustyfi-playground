@@ -22,12 +22,17 @@
 //!
 //! # What a browser build cannot do
 //!
-//! - **Fonts.** Rendering uses `rustyfi_pdf::Base14Metrics`, the 14 standard
-//!   PDF fonts, so no font file is embedded or fetched. Those fonts are
-//!   WinAnsi Latin: **CJK text will not render**, which for a typesetter whose
-//!   own manual is in Japanese is a real limitation, not a footnote. Embedding
-//!   a CJK face would add megabytes to a page load, so the playground states
-//!   the limit instead of paying that cost silently.
+//! - **Fonts.** There is no filesystem, so there is no `fonts.satysfi-hash`
+//!   to build a `rustyfi_pdf::FontRegistry` from: every face has to arrive as
+//!   BYTES from the caller. With none, rendering falls back to
+//!   `rustyfi_pdf::Base14Metrics`, the 14 standard PDF fonts, which are
+//!   WinAnsi Latin. [`compile_with_fonts_lang`] takes a Latin face and a CJK
+//!   face separately, and the second one is not a convenience: a document
+//!   asks for a CJK face BY NAME — `stdja` writes `set-font HanIdeographic`
+//!   with the abbrev `ipaexm` — and a store with no abbrev map resolves every
+//!   such name onto the Latin face and typesets `.notdef` without failing.
+//!   The playground fetches the CJK face only for documents that contain CJK,
+//!   so the megabytes are paid by the pages that need them.
 //! - **`load-image` / `load-pdf-image` / `read-file`** take filesystem paths
 //!   and have nothing to read. `load-pdf-image` is compiled out entirely (the
 //!   `pdf-image` feature is off — see `rustyfi-lang`'s `Cargo.toml`) and says
@@ -360,12 +365,97 @@ pub fn compile_with_font_lang(
     font: Option<Vec<u8>>,
     lang: Lang,
 ) -> Result<Vec<u8>, String> {
-    let store = font
-        .map(|bytes| {
-            rustyfi_pdf::TtfFontStore::from_bytes(bytes, None, None, "the uploaded font")
-                .map_err(|e| e.to_string())
-        })
-        .transpose()?;
+    compile_with_fonts_lang(source, font, None, lang)
+}
+
+/// The CJK abbrevs the bundled document classes actually ask for.
+///
+/// Read off `lib-rustyfi/dist/packages/` rather than assumed: `stdja`,
+/// `stdjabook`, `stdjareport` and `mdja` all name exactly these two —
+/// `ipaexm` (Mincho) in body text, `ipaexg` (Gothic) in section headings and
+/// `\emph`. A browser build fetches ONE CJK face, so both names are
+/// registered onto it; `TtfFontStore::from_bytes_with_abbrevs` dedups on the
+/// bytes, so that is one copy in memory and one embedded font in the PDF.
+///
+/// The alternative — fetching both real faces — is 13.9 MB of font against a
+/// page that otherwise weighs 8.8 MB, for a difference visible only in
+/// section headings.
+const CJK_ABBREVS: [&str; 2] = ["ipaexm", "ipaexg"];
+
+/// The size ratio the bundled `default-font.satysfi-hash` gives CJK, and the
+/// figure upstream SATySFi's own configuration uses: an IPAex em box is drawn
+/// to fill the full body, so it is set slightly smaller than the Latin face
+/// beside it.
+const CJK_RATIO: f64 = 0.88;
+
+/// Build the metric provider a compile runs against.
+///
+/// `None` for both faces means base-14. A Latin face alone is
+/// [`rustyfi_pdf::TtfFontStore::from_bytes`]'s three style slots, as before.
+/// A CJK face additionally registers [`CJK_ABBREVS`], so a `set-font` naming
+/// one resolves to it, AND sets it as the default for the two CJK scripts, so
+/// a document that never calls `set-font` at all — `stdja-mini`, or no class —
+/// still typesets Japanese.
+///
+/// A CJK face with no Latin face is accepted and makes the CJK face the Latin
+/// one too. It is a strange thing to ask for, but refusing it would be worse:
+/// IPAex covers Latin perfectly well, and the alternative is base-14, which
+/// covers no CJK at all.
+fn font_store(
+    font: Option<Vec<u8>>,
+    cjk: Option<Vec<u8>>,
+) -> Result<Option<rustyfi_pdf::TtfFontStore>, String> {
+    let (regular, cjk) = match (font, cjk) {
+        (None, None) => return Ok(None),
+        (Some(regular), cjk) => (regular, cjk),
+        (None, Some(cjk)) => (cjk.clone(), Some(cjk)),
+    };
+    let named: Vec<(String, Vec<u8>)> = match &cjk {
+        Some(bytes) => CJK_ABBREVS
+            .iter()
+            .map(|abbrev| ((*abbrev).to_string(), bytes.clone()))
+            .collect(),
+        None => Vec::new(),
+    };
+    let store = rustyfi_pdf::TtfFontStore::from_bytes_with_abbrevs(
+        regular,
+        None,
+        None,
+        named,
+        "the supplied font",
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Only when a CJK face was actually registered: `abbrev_key` would be
+    // `None` otherwise, and pointing a script default at the Latin face is
+    // what the base-14 path already does implicitly.
+    let Some(key) = store.abbrev_key(CJK_ABBREVS[0]) else {
+        return Ok(Some(store));
+    };
+    Ok(Some(
+        store
+            .with_script_default(rustyfi_backend::Script::HanIdeographic, key, CJK_RATIO, 0.0)
+            .with_script_default(rustyfi_backend::Script::Kana, key, CJK_RATIO, 0.0),
+    ))
+}
+
+/// [`compile_with_font_lang`], additionally taking a CJK face.
+///
+/// The two are separate arguments rather than a list because they are not
+/// interchangeable: the Latin one fills the three STYLE slots
+/// (`FontKey(0/1/2)`, what `set-font-key` and the base-14 convention address),
+/// the CJK one is registered under the ABBREVS a document names. Handing the
+/// same face to both is what a single-file upload does and is fine; handing a
+/// Latin face as the CJK one would satisfy the name lookup and still draw
+/// `.notdef`, which is the bug this argument exists to make impossible to
+/// reach by accident.
+pub fn compile_with_fonts_lang(
+    source: &str,
+    font: Option<Vec<u8>>,
+    cjk: Option<Vec<u8>>,
+    lang: Lang,
+) -> Result<Vec<u8>, String> {
+    let store = font_store(font, cjk)?;
     let base14 = rustyfi_pdf::Base14Metrics;
     let metrics: &dyn rustyfi_backend::FontMetrics = match &store {
         Some(store) => store,
@@ -405,12 +495,25 @@ pub fn compile_html_with_font_lang(
     font: Option<Vec<u8>>,
     lang: Lang,
 ) -> Result<String, String> {
-    let store = font
-        .map(|bytes| {
-            rustyfi_pdf::TtfFontStore::from_bytes(bytes, None, None, "the uploaded font")
-                .map_err(|e| e.to_string())
-        })
-        .transpose()?;
+    compile_html_with_fonts_lang(source, font, None, lang)
+}
+
+/// [`compile_html_with_font_lang`], additionally taking a CJK face.
+///
+/// The reflowable backend NAMES faces rather than embedding them, so what a
+/// CJK face buys here is the FAMILY NAME — `IPAexGothic` at the head of the
+/// stack, ahead of the reader's own default serif, which is what makes a
+/// Japanese run render as the document meant it rather than as whatever the
+/// browser picks. Metrics matter too: layout still runs, and a run measured
+/// against a Latin face that has no CJK glyph at all is measured against
+/// `.notdef`.
+pub fn compile_html_with_fonts_lang(
+    source: &str,
+    font: Option<Vec<u8>>,
+    cjk: Option<Vec<u8>>,
+    lang: Lang,
+) -> Result<String, String> {
+    let store = font_store(font, cjk)?;
     let base14 = rustyfi_pdf::Base14Metrics;
     let metrics: &dyn rustyfi_backend::FontMetrics = match &store {
         Some(store) => store,
@@ -768,6 +871,56 @@ pub unsafe extern "C" fn rustyfi_compile_with_font_lang(
     Output::from_result(result).into_raw()
 }
 
+/// [`rustyfi_compile_with_font_lang`], additionally taking a CJK face in
+/// `cjk[..cjk_len]`.
+///
+/// Additive rather than a wider `rustyfi_compile_with_font_lang`: the older
+/// entry point is a documented C ABI and still means what it meant, which is
+/// "no CJK face" — and a caller that passes a Latin face here would get the
+/// silent `.notdef` render this argument exists to prevent, so making the
+/// distinction visible in the symbol name is worth one more export.
+///
+/// A null `cjk` (or `cjk_len == 0`) is exactly
+/// [`rustyfi_compile_with_font_lang`].
+///
+/// # Safety
+/// As [`rustyfi_compile_with_font`], for all three buffers.
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_compile_with_fonts_lang(
+    src: *const u8,
+    len: usize,
+    font: *const u8,
+    font_len: usize,
+    cjk: *const u8,
+    cjk_len: usize,
+    lang: u32,
+) -> *mut Output {
+    let bytes: &[u8] = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src, len) }
+    };
+    let font = unsafe { borrowed_font(font, font_len) };
+    let cjk = unsafe { borrowed_font(cjk, cjk_len) };
+    let result = match std::str::from_utf8(bytes) {
+        Ok(source) => compile_with_fonts_lang(source, font, cjk, Lang::from_u32(lang)),
+        Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
+    };
+    Output::from_result(result).into_raw()
+}
+
+/// Copy an optional borrowed font buffer out of the caller's memory.
+///
+/// # Safety
+/// `ptr` must point to `len` readable bytes, or be null when `len` is 0.
+unsafe fn borrowed_font(ptr: *const u8, len: usize) -> Option<Vec<u8>> {
+    if ptr.is_null() || len == 0 {
+        None
+    } else {
+        Some(unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec())
+    }
+}
+
 /// [`rustyfi_compile_with_font_lang`], but the successful [`Output`] carries
 /// UTF-8 HTML instead of PDF bytes.
 ///
@@ -793,6 +946,37 @@ pub unsafe extern "C" fn rustyfi_compile_html(
     };
     let result = match std::str::from_utf8(bytes) {
         Ok(source) => compile_html_with_font_lang(source, font, Lang::from_u32(lang))
+            .map(String::into_bytes),
+        Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
+    };
+    Output::from_result(result).into_raw()
+}
+
+/// [`rustyfi_compile_html`], additionally taking a CJK face — the HTML
+/// counterpart of [`rustyfi_compile_with_fonts_lang`], and additive for the
+/// same reason.
+///
+/// # Safety
+/// As [`rustyfi_compile_with_font`], for all three buffers.
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_compile_html_fonts(
+    src: *const u8,
+    len: usize,
+    font: *const u8,
+    font_len: usize,
+    cjk: *const u8,
+    cjk_len: usize,
+    lang: u32,
+) -> *mut Output {
+    let bytes: &[u8] = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src, len) }
+    };
+    let font = unsafe { borrowed_font(font, font_len) };
+    let cjk = unsafe { borrowed_font(cjk, cjk_len) };
+    let result = match std::str::from_utf8(bytes) {
+        Ok(source) => compile_html_with_fonts_lang(source, font, cjk, Lang::from_u32(lang))
             .map(String::into_bytes),
         Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
     };
@@ -1281,6 +1465,108 @@ mod tests {
     fn a_parse_error_comes_back_as_text_not_a_panic() {
         let err = compile("@require: stdja-mini\nthis is not a document").expect_err("bad syntax");
         assert!(!err.is_empty(), "an empty diagnostic helps nobody");
+    }
+
+    /// The whole point of the CJK argument: a document names a face by
+    /// ABBREV, and a store with no abbrev map answers `None` to the name and
+    /// lets `rustyfi-lang`'s spelling heuristic pick the Latin face — which
+    /// cannot fail, so nothing is reported and `.notdef` is drawn.
+    ///
+    /// Run against the submodule's own bundled faces where `download-fonts.sh`
+    /// has put them, which makes the LAST assertion the real one: the abbrev
+    /// resolves to a face that actually has a 日, and the Latin face does not.
+    /// Falls back to two system faces, which still separate "resolved to the
+    /// CJK slot" from "fell through to the Latin one" but cannot speak about
+    /// coverage. Skips when neither is available — and `selftest.mjs`, which
+    /// CI does run, checks the same thing against the very file the site
+    /// serves and FAILS rather than skipping when it is missing.
+    #[test]
+    fn a_cjk_face_is_reachable_by_the_abbrevs_the_bundled_classes_name() {
+        use super::*;
+        let bundled = bundled_faces();
+        let real_cjk = bundled.is_some();
+        let Some((latin, cjk)) = bundled.or_else(|| Some((system_face(0)?, system_face(1)?)))
+        else {
+            return;
+        };
+
+        let none = font_store(Some(latin.clone()), None)
+            .expect("the face should parse")
+            .expect("a face was given");
+        assert_eq!(
+            rustyfi_backend::FontMetrics::resolve_font_abbrev(&none, "ipaexm"),
+            None,
+            "without a CJK face there is no abbrev to resolve, and the \
+             heuristic silently picks the Latin one",
+        );
+
+        let store = font_store(Some(latin), Some(cjk))
+            .expect("both faces should parse")
+            .expect("faces were given");
+        let mincho = store.abbrev_key("ipaexm").expect("ipaexm must resolve");
+        let gothic = store.abbrev_key("ipaexg").expect("ipaexg must resolve");
+        // `stdja` sets body text in the first and headings in the second; one
+        // fetched face serves both, as one embedded copy.
+        assert_eq!(store.file_index(mincho), store.file_index(gothic));
+        assert_ne!(
+            store.file_index(mincho),
+            store.file_index(rustyfi_backend::FontKey(0)),
+            "the CJK abbrevs must not land on the Latin face — that IS the bug",
+        );
+        // And a document that never calls `set-font` (stdja-mini, or none at
+        // all) still gets it, through `get-initial-context`'s overlay.
+        for script in [
+            rustyfi_backend::Script::HanIdeographic,
+            rustyfi_backend::Script::Kana,
+        ] {
+            assert_eq!(
+                rustyfi_backend::FontMetrics::default_script_font(&store, script),
+                Some((mincho, CJK_RATIO, 0.0)),
+            );
+        }
+
+        if real_cjk {
+            let size = rustyfi_backend::Length::pt(12.0);
+            let advance = |key| rustyfi_backend::FontMetrics::advance(&store, key, '日', size);
+            assert!(
+                advance(mincho).is_some(),
+                "the CJK abbrev must reach a face that has the glyph",
+            );
+            assert!(
+                advance(rustyfi_backend::FontKey(0)).is_none(),
+                "the Latin face must NOT have it, or this proves nothing",
+            );
+        }
+    }
+
+    /// The typesetter submodule's own Latin and CJK faces, once
+    /// `download-fonts.sh` has installed them. `None` before that — they are
+    /// gitignored build inputs, not committed files.
+    fn bundled_faces() -> Option<(Vec<u8>, Vec<u8>)> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../rustyfi/lib-rustyfi/dist/fonts");
+        let latin = std::fs::read(dir.join("Junicode.ttf")).ok()?;
+        let cjk = std::fs::read(dir.join("ipaexg.ttf")).ok()?;
+        Some((latin, cjk))
+    }
+
+    /// Two distinct real faces from the system, by index. `None` rather than a
+    /// failure: which faces exist varies by machine, the same bargain
+    /// `rustyfi-pdf`'s own font tests make.
+    fn system_face(nth: usize) -> Option<Vec<u8>> {
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSerif.ttf",
+            "/usr/share/fonts/TTF/DejaVuSerif.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+        ]
+        .iter()
+        .filter_map(|path| std::fs::read(path).ok())
+        .nth(nth)
     }
 
     #[test]

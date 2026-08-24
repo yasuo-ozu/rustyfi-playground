@@ -21,12 +21,21 @@ beside `index.html`, and serve the directory over http:
 ```console
 $ cargo build -p rustyfi-wasm --release --target wasm32-unknown-unknown
 $ cp target/wasm32-unknown-unknown/release/rustyfi_wasm.wasm playground/
+$ sh rustyfi/download-fonts.sh
+$ mkdir -p playground/fonts
+$ cp rustyfi/lib-rustyfi/dist/fonts/{Junicode.ttf,ipaexg.ttf} playground/fonts/
+$ cp rustyfi/lib-rustyfi/dist/fonts/{LICENSE-Junicode-OFL.txt,IPA_Font_License_Agreement_v1.0.txt} playground/fonts/
 $ python3 -m http.server -d playground 8000
 ```
 
 Then open <http://localhost:8000>. It has to be http(s): both module scripts
 and `WebAssembly.instantiateStreaming` are blocked on `file://` URLs. The
 editor bundle is committed, so there is nothing to build for it.
+
+The fonts are gitignored, so those two `cp` lines are what `pages.yml` does for
+the deploy. `selftest.mjs` **fails** rather than skips when the Japanese face is
+absent — a missing CJK face does not make a render fail, it makes it draw
+nothing, so a skip there is how that bug went unnoticed in the first place.
 
 Two licence links in the packages panel 404 in this setup: `LICENSE.LGPL-3.0`
 and `LICENSE.GPL-3.0` live in the `rustyfi/` submodule and are copied into
@@ -275,13 +284,24 @@ something else would leave the page explaining a diagnostic nobody gets.
 
 These are properties of a browser build, not of the typesetter:
 
-- **Base-14 fonts by default**, which are WinAnsi Latin. Japanese will not
-  typeset, and neither will the full `stdja`/`stdjabook`/`stdjareport` classes —
-  their page furniture contains an em dash. Junicode is served beside the page
-  and loaded before the first typeset, which covers Latin; for CJK, pick a
-  `.ttf`/`.otf` with the picker. **Whatever you pick is read in the tab and is
-  never uploaded.** No CJK face is bundled because it would cost every visitor
-  megabytes.
+- **Two faces are served, and only one is fetched up front.** Junicode (0.8 MB)
+  loads before the first typeset and covers Latin; **IPAexGothic (5.8 MB) is
+  fetched the first time a document actually contains Japanese**, because it is
+  seven times the size and most documents here are Latin-only. The status line
+  says when that is happening. Without either, rendering falls back to the 14
+  standard PDF fonts, which are WinAnsi Latin — under those the full
+  `stdja`/`stdjabook`/`stdjareport` classes do not typeset at all, their page
+  furniture containing an em dash.
+
+  Gothic rather than Mincho, though `stdja` sets body text in Mincho: one
+  fetched face has to answer to both abbrevs (`ipaexm` and `ipaexg`), and this
+  one is 1.65 MB smaller and holds up better at the size a browser's PDF viewer
+  shows. The visible cost is that section headings no longer differ from the
+  body.
+
+  You can still supply your own with the picker, and it then replaces **both** —
+  a face of yours is used for every script, which is what that control has
+  always done. **Whatever you pick is read in the tab and is never uploaded.**
 - **`@require:` resolves against fixed bundled corpora only** — the frozen
   SATySFi 0.0.6 standard library, a licence-cleared subset of rustyfi's
   layout-test corpus, and the SATySFi 0.1 standard library, all from the

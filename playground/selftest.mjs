@@ -8,10 +8,13 @@
 // cannot actually typeset never reaches the site. Offline, no TTY.
 
 import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 import { instantiate } from "./rustyfi.js";
 import { EXAMPLES } from "./examples.js";
 import { decodeSource, encodeSource, shareLang, shareUrl, SHORTENERS } from "./share.js";
-import { PACKAGE_SETS, PACKAGE_SETS_V01, groupPackages, setsFor } from "./packages.js";
+import { PACKAGE_SETS, PACKAGE_SETS_V01, FONTS, groupPackages, setsFor } from "./packages.js";
 
 const wasmPath = process.argv[2];
 if (!wasmPath) {
@@ -28,6 +31,19 @@ const check = (name, condition, detail = "") => {
     console.error(`FAIL ${name}${detail ? `\n     ${detail}` : ""}`);
   }
 };
+
+/// Where a served font legitimately lives, in the order to look.
+///
+/// Fonts are fetched by the deploy rather than committed — they are gitignored
+/// build inputs — so this is a search rather than one path. First: beside the
+/// module under test, which is `_site/fonts/` when the workflow runs this
+/// against `_site/rustyfi_wasm.wasm`, i.e. the very copy a visitor downloads.
+/// Then the local preview directory, then the submodule's own font install.
+const FONT_DIRS = [
+  resolve(dirname(wasmPath), "fonts"),
+  fileURLToPath(new URL("./fonts/", import.meta.url)),
+  fileURLToPath(new URL("../rustyfi/lib-rustyfi/dist/fonts/", import.meta.url)),
+];
 
 const wasm = await readFile(wasmPath);
 const rustyfi = await instantiate(wasm);
@@ -86,6 +102,46 @@ check("stdjabook is bundled", packages.includes("stdjabook"), packages.join(", "
     empty.length === 0,
     empty.map((s) => s.name).join(", "),
   );
+  // 1c. …and so does every FONT. A font file is third-party redistribution
+  //     exactly as a package is, and both of these carry a licence that says
+  //     in so many words that its text must travel with the file: OFL 1.1 §2
+  //     for Junicode, IPA Font License 1.0 Article 3 Paragraph 2(3) for
+  //     IPAex. `pages.yml` copies each pair in one step; this is what notices
+  //     if one of the two lines is ever dropped.
+  //
+  //     "Travels with it" is checked as ADJACENCY, in the one directory the
+  //     face was actually found in — not as "both files exist somewhere".
+  //     That is the shape of the obligation, and it is also the shape of the
+  //     mistake: two `cp` lines in `pages.yml`, one of them forgotten.
+  for (const font of FONTS) {
+    check(`${font.name}: has a stated licence`, Boolean(font.license && font.licenseHref));
+    const licenseName = font.licenseHref.replace("./fonts/", "");
+    let found = null;
+    for (const dir of FONT_DIRS) {
+      const bytes = await readFile(resolve(dir, font.file)).catch(() => null);
+      if (bytes !== null) {
+        found = { dir, bytes };
+        break;
+      }
+    }
+    if (found === null) {
+      console.log(`skip ${font.name}: no ${font.file} in any served directory`);
+      continue;
+    }
+    check(
+      `${font.name}: is served under its own unmodified name`,
+      found.bytes.length === font.bytes,
+      `${found.bytes.length} bytes, expected ${font.bytes} — a resized file is ` +
+      "a modified one, which neither licence permits redistributing under this name",
+    );
+    const text = await readFile(resolve(found.dir, licenseName), "utf8").catch(() => null);
+    check(
+      `${font.name}: its licence travels with it`,
+      text !== null && text.length > 500,
+      `${licenseName} is missing from ${found.dir}, which is serving ${font.file}`,
+    );
+  }
+
   for (const { set, members } of groups) {
     const href = set.licenseHref.replace("./", "playground/");
     // The LGPL/GPL pair is copied out of the submodule by the deploy, so it is
@@ -273,6 +329,159 @@ if (fontBytes === null) {
   check("garbage in the font slot is rejected cleanly", !badFont.ok);
 }
 
+// 7b. THE JAPANESE FACE.
+//
+//     Checked on the RENDERED PDF and not on `result.ok`, because `result.ok`
+//     is exactly what used to lie: a document asks for a CJK face by abbrev
+//     (`stdja`'s `set-font HanIdeographic (`ipaexm`, …)`), a store with no
+//     abbrev map answers `None`, and rustyfi-lang's three-face spelling
+//     heuristic — which cannot fail — hands back the Latin face. The compile
+//     then succeeds and draws .notdef for every Japanese character. There is
+//     no error to assert on, so the assertion has to be about ink.
+//
+//     What is read out of the PDF is its ToUnicode CMaps, which is what a
+//     copy-paste or a `pdftotext` would read. In the broken render every CJK
+//     character shares one glyph (.notdef) and the map carries ONE CJK
+//     codepoint; in a correct one it carries dozens, and 日, 本 and 語 are
+//     each individually present. The control below is not decoration: without
+//     it a check that stopped discriminating would stay green forever, which
+//     is precisely how this bug survived.
+//
+//     Unlike section 7 this does NOT skip when the font is missing. A silent
+//     skip is the failure mode being tested.
+
+/// Every Unicode scalar any embedded font's ToUnicode CMap maps to.
+///
+/// A ToUnicode stream is a CMap program; the two forms a `bfchar`/`bfrange`
+/// table can take are `<src> <dst>` pairs and `<lo> <hi> <dst>` ranges, and
+/// the destination is a UTF-16BE string, so a surrogate pair is two units.
+/// Only the BMP is decoded here, which is all a Japanese document reaches.
+function pdfMappedCodepoints(bytes) {
+  const buf = Buffer.from(bytes);
+  const latin1 = buf.toString("latin1");
+  const found = new Set();
+  const re = /stream\r?\n/g;
+  let m;
+  while ((m = re.exec(latin1)) !== null) {
+    const start = m.index + m[0].length;
+    const end = latin1.indexOf("endstream", start);
+    if (end < 0) continue;
+    const raw = buf.subarray(start, end);
+    let text;
+    try {
+      text = zlib.inflateSync(raw).toString("latin1");
+    } catch {
+      text = raw.toString("latin1");
+    }
+    if (!/beginbfchar|beginbfrange/.test(text)) continue;
+    for (const pair of text.matchAll(/<([0-9A-Fa-f]{4})>\s*<([0-9A-Fa-f]{4,})>/g)) {
+      const dst = pair[2];
+      for (let i = 0; i + 4 <= dst.length; i += 4) {
+        found.add(parseInt(dst.slice(i, i + 4), 16));
+      }
+    }
+  }
+  return found;
+}
+
+const isCjk = (cp) =>
+  (cp >= 0x3000 && cp <= 0x30ff) || (cp >= 0x3400 && cp <= 0x9fff) ||
+  (cp >= 0xf900 && cp <= 0xfaff);
+
+const JA = `@require: stdja
+document (|
+  title = {日本語の組版};
+  author = {rustyfi};
+  show-title = true;
+  show-toc = false;
+|) '<
+  +p { これは日本語のテスト文書です。吾輩は猫である。名前はまだ無い。 }
+>
+`;
+
+let cjkFontBytes = null;
+for (const dir of FONT_DIRS) {
+  const candidate = resolve(dir, "ipaexg.ttf");
+  cjkFontBytes = await readFile(candidate).catch(() => null);
+  if (cjkFontBytes !== null) {
+    console.log(`     using CJK font ${candidate}`);
+    break;
+  }
+}
+check(
+  "the Japanese face is available to test against",
+  cjkFontBytes !== null,
+  "run `sh rustyfi/download-fonts.sh` — this check does not skip, because a " +
+  "skip is how the missing-CJK-face bug stayed invisible",
+);
+
+{
+  const cjkBytes = cjkFontBytes;
+  if (cjkBytes !== null && fontBytes !== null) {
+    // THE CONTROL: a Latin face alone. This is the old behaviour, and it must
+    // still succeed — that is the bug — while drawing essentially nothing.
+    const latinOnly = rustyfi.compile(JA, fontBytes, 0);
+    check(
+      "a Japanese document compiles with only a Latin face (it always did)",
+      latinOnly.ok,
+      latinOnly.ok ? "" : latinOnly.error.split("\n")[0],
+    );
+    if (latinOnly.ok) {
+      const drawn = [...pdfMappedCodepoints(latinOnly.pdf)].filter(isCjk);
+      check(
+        "…and draws no Japanese, which is why `ok` cannot be the assertion",
+        drawn.length <= 1,
+        `${drawn.length} CJK codepoints reached the page without a CJK face`,
+      );
+    }
+
+    // AND THE FIX.
+    const withCjk = rustyfi.compile(JA, fontBytes, 0, cjkBytes);
+    check(
+      "a Japanese document compiles with the CJK face",
+      withCjk.ok,
+      withCjk.ok ? "" : withCjk.error.split("\n")[0],
+    );
+    if (withCjk.ok) {
+      const drawn = new Set([...pdfMappedCodepoints(withCjk.pdf)].filter(isCjk));
+      check(
+        "…and the Japanese is really drawn, not .notdef",
+        drawn.size >= 15,
+        `only ${drawn.size} distinct CJK codepoints in the PDF`,
+      );
+      for (const ch of "日本語") {
+        check(`the PDF carries ${ch}`, drawn.has(ch.codePointAt(0)));
+      }
+      check(
+        "the CJK face makes the PDF bigger, so it really was embedded",
+        latinOnly.ok && withCjk.pdf.length > latinOnly.pdf.length,
+        `${withCjk.pdf.length} vs ${latinOnly.ok ? latinOnly.pdf.length : "n/a"}`,
+      );
+      console.log(`     ${withCjk.pdf.length} bytes of PDF, ${drawn.size} CJK codepoints`);
+    }
+
+    // One face, two abbrevs: `stdja` sets body text in `ipaexm` and section
+    // headings in `ipaexg`, and the page fetches one file for both. If the two
+    // were embedded separately the PDF would carry the 5.8 MB face twice.
+    check(
+      "one CJK file is embedded, not one per abbrev",
+      withCjk.ok && withCjk.pdf.length < cjkBytes.length,
+      withCjk.ok ? `${withCjk.pdf.length} bytes` : "no PDF",
+    );
+
+    // HTML mode NAMES faces rather than embedding them, so what has to arrive
+    // there is the family name at the head of the stack.
+    const html = rustyfi.compileHtml(JA, fontBytes, 0, cjkBytes);
+    check("a Japanese document compiles in HTML mode", html.ok,
+      html.ok ? "" : html.error.split("\n")[0]);
+    if (html.ok) {
+      check("the HTML names the Japanese family", /IPAex/i.test(html.html),
+        "no IPAex family in the emitted CSS");
+      check("the HTML carries the Japanese text itself", html.html.includes("吾輩は猫である"));
+    }
+  }
+}
+
 // 8. Every example the page actually ships. A broken example is worse than no
 //    example, and this is the only way to know without opening a browser.
 //
@@ -310,12 +519,24 @@ for (const example of EXAMPLES) {
       out.ok ? "it compiled; drop the needsFont label" : out.error.split("\n")[0],
     );
     if (fontBytes !== null) {
-      const withFont = rustyfi.compile(example.source, fontBytes, lang);
+      // A `needsCjk` example gets the CJK face too, and is checked for INK
+      // rather than for success — succeeding while drawing nothing is the
+      // failure mode, so `ok` alone would pass on the broken render.
+      const cjk = example.needsCjk ? cjkFontBytes : null;
+      const withFont = rustyfi.compile(example.source, fontBytes, lang, cjk);
       check(
         `example "${example.name}" succeeds with a font`,
         withFont.ok,
         withFont.ok ? "" : withFont.error.split("\n")[0],
       );
+      if (withFont.ok && example.needsCjk) {
+        const drawn = new Set([...pdfMappedCodepoints(withFont.pdf)].filter(isCjk));
+        check(
+          `example "${example.name}" really draws its Japanese`,
+          drawn.size >= 15,
+          `only ${drawn.size} distinct CJK codepoints in the PDF`,
+        );
+      }
       if (withFont.ok) console.log(`     ${withFont.pdf.length} bytes of PDF (with a font)`);
     }
   } else {
