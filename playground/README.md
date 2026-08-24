@@ -205,6 +205,16 @@ has ever had, so it is vendored rather than linked. The self-test fails the
 deploy if the page grows an absolute URL, or if the bundle contains an import
 that did not get resolved.
 
+  **One exception, added deliberately:** choosing the KaTeX math mode loads
+  KaTeX from jsDelivr *into the preview frame*. The playground document
+  itself still fetches nothing off-origin — the selftest asserts that
+  separately. The frame stands in for someone else's Markdown reader, and a
+  reader that runs KaTeX is exactly what `--katex` output is for; rendering
+  it without one would show raw `$…$` and prove nothing. The version is
+  pinned, all three assets carry subresource integrity, `crossorigin` is set
+  so the browser actually checks it, and nothing is requested in any other
+  math mode — so the page still works offline unless you ask for KaTeX.
+
 - **362,651 bytes, 115 kB gzipped**, against a WebAssembly module of 7.6 MB /
   2.0 MB gzipped: about 5% more to download.
 - Assembled from six `@codemirror/*` packages and their dependencies —

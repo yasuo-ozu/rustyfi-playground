@@ -1432,6 +1432,46 @@ StdJa.document (| title = {t}; author = {a} |) '<
     .filter((u) => /^https?:/.test(u))
     .filter((u) => !/github\.com|opensource\.org/.test(u));
   check("the page fetches nothing from another origin", fetched.length === 0, fetched.join(" "));
+
+  // KaTeX is the ONE off-origin resource, and it is confined to the preview
+  // FRAME — it appears in a template string, never in the page's own markup,
+  // which is why the check above still holds. Three properties are pinned,
+  // because each would fail quietly on its own:
+  //   * an exact version, so the CDN cannot hand us a different KaTeX;
+  //   * subresource integrity on all three files, since this is SCRIPT running
+  //     in a frame that holds the reader's own document;
+  //   * `crossorigin`, without which the browser does not CHECK the SRI at all
+  //     and the hashes are decoration.
+  // The URL and the hashes are BUILT from constants, so grepping the markup
+  // for a literal `katex@0.18.4` or `integrity="sha384-` finds nothing and
+  // passes for the wrong reason. Check the constants themselves.
+  const usesKatex = /cdn\.jsdelivr\.net/.test(page);
+  const katexUrls = usesKatex ? ["cdn.jsdelivr.net"] : [];
+  check(
+    "KaTeX is pinned to an exact version",
+    !usesKatex || /KATEX_VERSION = "\d+\.\d+\.\d+"/.test(page),
+    "the CDN could hand back a different KaTeX than the hashes were taken from",
+  );
+  const sri = (page.match(/sha384-[A-Za-z0-9+/]{40,}/g) ?? []).length;
+  const cors = (page.match(/crossorigin="anonymous"/g) ?? []).length;
+  check("every KaTeX asset carries subresource integrity", !usesKatex || sri === 3,
+    `${sri} sha384 hashes for 3 assets`);
+  check("SRI is actually checked, i.e. crossorigin is set", katexUrls.length === 0 || cors === 3,
+    `${cors} crossorigin attributes`);
+  // A dollar the DOCUMENT wrote must not become a KaTeX delimiter. The backend
+  // escapes it for Markdown; `marked` resolves that escape to a bare `$`, and
+  // auto-render then pairs it with the next one and eats the prose between.
+  check(
+    "a literal dollar is protected from auto-render",
+    !usesKatex ||
+      (/ignoredClasses:\['nomath'\]/.test(page) && /function protectLiteralDollars/.test(page)),
+    "prose containing ${ would render as mangled text in KaTeX mode",
+  );
+  check(
+    "KaTeX is only fetched when a KaTeX mode is chosen",
+    katexUrls.length === 0 || /mathMode !== 4\) return ""/.test(page),
+    "the CDN would be contacted even for readers who never ask for KaTeX",
+  );
   check("the page loads the vendored editor", /from "\.\/vendor\/codemirror\.js"/.test(page));
   check("the page bundles a math face", /\.\/fonts\/latinmodern-math\.otf/.test(page),
     "the page never fetches a MATH-table font, so equations will lay out against " +

@@ -941,11 +941,29 @@ function showPdf(bytes) {
 /// it so.
 function showHtml(html) {
   if (blobUrl) URL.revokeObjectURL(blobUrl);
-  blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+  // KaTeX goes into the FRAMED copy only. The writer's output is
+  // self-contained — it fetches nothing and runs nothing, an invariant its own
+  // test suite pins — and the file you download is still exactly that. What
+  // the frame adds is the READER, which is the part `--katex` output needs and
+  // does not carry.
+  const framed = mathMode === 4 ? injectKatex(html) : html;
+  blobUrl = URL.createObjectURL(new Blob([framed], { type: "text/html;charset=utf-8" }));
   previewEl.src = blobUrl;
   previewEl.title = "Typeset HTML";
   showPane("html");
   offerDownload(html, "document.html", "text/html;charset=utf-8");
+}
+
+/// Put the KaTeX loader into a complete document's `<head>`.
+///
+/// Falls back to prepending when there is no `</head>` — the writer emits one
+/// today, but a silent no-op here would look like KaTeX failing rather than
+/// like a document this did not understand.
+function injectKatex(html) {
+  const head = katexHead();
+  if (!head) return html;
+  const at = html.indexOf("</head>");
+  return at < 0 ? head + html : html.slice(0, at) + head + html.slice(at);
 }
 
 /// The stylesheet the rendered-Markdown frame carries.
@@ -954,6 +972,57 @@ function showHtml(html) {
 /// Markdown reader, and dressing it in this page's chrome would make the
 /// output look better here than it will anywhere else. It follows the
 /// reader's light/dark preference because the surrounding page does.
+/// KaTeX, for the two modes that emit LaTeX rather than drawing it.
+///
+/// **This is the one thing on this page that comes from another origin**, and
+/// it is deliberately confined to the PREVIEW FRAME. The playground document
+/// itself still fetches nothing off-origin — the selftest asserts that
+/// separately — because the frame is standing in for someone else's Markdown
+/// reader, and a reader that runs KaTeX is exactly what `--katex` output is
+/// FOR. Rendering it without one would show the reader raw `$…$` and tell them
+/// nothing about whether the output is correct.
+///
+/// Pinned to an exact version with subresource integrity, so a compromised or
+/// substituted CDN response is refused rather than executed: this is script,
+/// and it runs in a frame holding the reader's own document. `crossorigin` is
+/// required for SRI to be checked at all.
+///
+/// Injected ONLY when a KaTeX mode is selected — no other mode makes the
+/// request, so the page's normal operation is unchanged and works offline.
+const KATEX_VERSION = "0.18.4";
+const KATEX_BASE = `https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist`;
+const KATEX_SRI = {
+  css: "sha384-u1zONI5gPXUx0UKI62c75/zww972y0v2rSK5ZYlVdS6xEuWDeZWUI66v6t1gvlXJ",
+  js: "sha384-ykMNcWQhhTUb0YV9SPpPUFURHZ+tWmubkakGBP+OgNK/UXdO2gtzglWx0Rj9hnO3",
+  auto: "sha384-bjyGPfbij8/NDKJhSGZNP/khQVgtHUE5exjm4Ydllo42FwIgYsdLO2lXGmRBf5Mz",
+};
+
+/// The `<head>` fragment that turns a preview frame into a KaTeX-rendering
+/// reader. Empty unless a KaTeX mode is selected.
+///
+/// `delimiters` match what the two backends actually emit: Markdown writes
+/// `$…$`/`$$…$$`, HTML writes `\\(…\\)`/`\\[…\\]`. `throwOnError: false`
+/// leaves a bad formula visible in red rather than blanking the document —
+/// which is the honest thing for a preview whose job is to show you what your
+/// output does at a reader.
+function katexHead() {
+  if (mathMode !== 4) return "";
+  return (
+    `<link rel="stylesheet" href="${KATEX_BASE}/katex.min.css"` +
+    ` integrity="${KATEX_SRI.css}" crossorigin="anonymous">` +
+    `<script defer src="${KATEX_BASE}/katex.min.js"` +
+    ` integrity="${KATEX_SRI.js}" crossorigin="anonymous"><\/script>` +
+    `<script defer src="${KATEX_BASE}/contrib/auto-render.min.js"` +
+    ` integrity="${KATEX_SRI.auto}" crossorigin="anonymous"` +
+    ` onload="renderMathInElement(document.body,{ignoredClasses:['nomath'],delimiters:[` +
+    `{left:'$$',right:'$$',display:true},` +
+    `{left:'\\[',right:'\\]',display:true},` +
+    `{left:'$',right:'$',display:false},` +
+    `{left:'\\(',right:'\\)',display:false}` +
+    `],throwOnError:false})"><\/script>`
+  );
+}
+
 const MARKDOWN_CSS = `
 :root { color-scheme: light dark; --fg:#1a1a1a; --bg:#fff; --mut:#666; --bd:#d8d8d8; --sub:#f6f8fa; }
 @media (prefers-color-scheme: dark) {
@@ -1025,6 +1094,29 @@ function showMarkdownAs(md) {
   else showMarkdown(md);
 }
 
+/// A literal dollar the DOCUMENT wrote, protected from KaTeX.
+///
+/// The backend escapes it correctly for Markdown — prose containing `${` comes
+/// out as `\$&#123;` — but that escape is for the Markdown PARSER, and
+/// `marked` resolves it to a bare `$` in the HTML. KaTeX's auto-render then
+/// sees that `$` and pairs it with the next one, swallowing the prose between
+/// them: the equations example rendered "between and,like{ and }, like
+/// and,like1+2=3$" instead of its own sentence.
+///
+/// So each escaped dollar is carried through `marked` as a sentinel and comes
+/// out wrapped in a class auto-render is told to ignore. U+E000 is a
+/// private-use codepoint: no document contains one, and `marked` has no rule
+/// about it.
+const DOLLAR_SENTINEL = "\uE000";
+
+function protectLiteralDollars(md) {
+  return md.replace(/\\\$/g, DOLLAR_SENTINEL);
+}
+
+function restoreLiteralDollars(html) {
+  return html.split(DOLLAR_SENTINEL).join('<span class="nomath">$</span>');
+}
+
 function showMarkdown(md) {
   lastMarkdown = md;
   const page =
@@ -1032,10 +1124,13 @@ function showMarkdown(md) {
     (mdTheme === "auto" ? "<html>" : `<html data-theme="${mdTheme}">`) +
     "<meta charset=utf-8>" +
     "<meta name=viewport content='width=device-width, initial-scale=1'>" +
-    "<style>" + MARKDOWN_CSS + "</style>" +
+    "<style>" + MARKDOWN_CSS + "</style>" + katexHead() +
     // No closing tag: it is optional in HTML, and a literal "</body>" inside a
     // <script> is a footgun for anything that string-processes this page.
-    "<body>" + markdownToHtml(md);
+    "<body>" +
+    (mathMode === 4
+      ? restoreLiteralDollars(markdownToHtml(protectLiteralDollars(md)))
+      : markdownToHtml(md));
   if (blobUrl) URL.revokeObjectURL(blobUrl);
   blobUrl = URL.createObjectURL(new Blob([page], { type: "text/html;charset=utf-8" }));
   previewEl.src = blobUrl;
