@@ -1462,6 +1462,52 @@ StdJa.document (| title = {t}; author = {a} |) '<
   // someone else's Markdown reader, so an explicit choice has to beat the
   // reader's own `prefers-color-scheme` — which needs a rule in BOTH
   // directions, not just a dark one.
+  // The math-mode picker. Every mode must reach the module and produce
+  // DIFFERENT bytes, or the control is decoration.
+  check("the page offers a math-mode picker", /id="mathmode"/.test(page));
+  check("the picker is hidden on the PDF tab",
+    /body\.fmt-markdown \.mathpick, body\.fmt-html \.mathpick/.test(page),
+    "a PDF has one rendering, so the control means nothing there");
+  check("markdown-only modes are disabled on the HTML tab",
+    /data-md-only/.test(page) && /function syncMathOptions\(\)/.test(page),
+    "the module falls back silently, so an offered-but-ignored mode is the " +
+      "worst outcome: measured identical output with Unicode selected in HTML");
+  {
+    // A document WITH math. `HELLO` has none, and with no equation every mode
+    // emits the same bytes — the checks below would all pass and mean nothing.
+    const EQ =
+      "@require: stdja-mini\n@require: math\n" +
+      "document (|title = {m}; author = {a}|) '<+p{inline ${x^2 + 1} and " +
+      "${\\frac{a}{b}} here}>";
+    const mathFace = await readFile(
+      new URL("./fonts/latinmodern-math.otf", import.meta.url),
+    ).catch(() =>
+      readFile(
+        new URL("../rustyfi/lib-rustyfi/dist/fonts/latinmodern-math.otf", import.meta.url),
+      ).catch(() => null),
+    );
+    const NAMES = { 1: "outline", 2: "svg-text", 3: "unicode", 4: "katex" };
+    const md = new Map(), htm = new Map();
+    for (const m of [0, 1, 2, 3, 4]) {
+      const r = rustyfi.compileMarkdown(EQ, fontBytes, 0, null, mathFace, m);
+      if (r.ok) md.set(m, r.markdown);
+      const h = rustyfi.compileHtml(EQ, fontBytes, 0, null, mathFace, m);
+      if (h.ok) htm.set(m, h.html);
+    }
+    check("every math mode compiles in markdown", md.size === 5, `${md.size}/5`);
+    check("every math mode compiles in html", htm.size === 5, `${htm.size}/5`);
+    // Markdown's default is SVG text; HTML's is outline. Those two pairings
+    // must match, and the others must not — that is the whole contract.
+    check("markdown's default is the SVG-text mode", md.get(0) === md.get(2));
+    check("html's default is the outline mode", htm.get(0) === htm.get(1));
+    check("markdown's outline mode differs from its default", md.get(0) !== md.get(1));
+    check("html's svg-text mode differs from its default", htm.get(0) !== htm.get(2));
+    for (const m of [3, 4]) {
+      check(`markdown's ${NAMES[m]} mode differs from its default`, md.get(0) !== md.get(m));
+    }
+    check("html's katex mode differs from its default", htm.get(0) !== htm.get(4));
+  }
+
   check("the Markdown preview has a theme toggle", /class="mdt"/.test(page));
   for (const th of ["auto", "light", "dark"]) {
     check(`the theme toggle offers ${th}`, new RegExp(`data-theme="${th}"`).test(page));

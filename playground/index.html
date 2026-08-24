@@ -262,6 +262,15 @@
   /* Only meaningful for the RENDERED Markdown tab: the source tab is text on
      this page and already follows the page's own theme, and the PDF and HTML
      tabs carry their own. `body.fmt-markdown` is set by the tab handler. */
+  /* Equations are only written differently by the two reflowed formats; the
+     PDF has one rendering, which is why the CLI makes the flag a usage error
+     against `--format pdf`. */
+  .mathpick { display: none; align-items: baseline; gap: 0.3rem; margin-left: 0.6rem;
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  body.fmt-markdown .mathpick, body.fmt-html .mathpick { display: inline-flex; }
+  .mathpick select { font: inherit; font-size: 0.72rem; text-transform: none; letter-spacing: 0;
+    padding: 0.08rem 0.2rem; border: 1px solid var(--line); border-radius: 5px;
+    background: var(--panel); color: var(--ink); }
   .mdtheme { display: none; gap: 0.2rem; margin-left: 0.5rem; }
   body.fmt-markdown .mdtheme { display: inline-flex; }
   .mdt {
@@ -397,6 +406,17 @@
           <button class="fmt" data-fmt="markdown" role="tab" aria-selected="false"
             title="The Markdown, rendered — what a reader of the file would see.">Markdown</button>
         </span>
+        <label class="mathpick" id="mathpick"
+          title="How equations are written. Each is right for a different reader; the default follows the format.">
+          Math
+          <select id="mathmode">
+            <option value="0" selected>Default</option>
+            <option value="1">Outlined SVG</option>
+            <option value="2">SVG text</option>
+            <option value="3" data-md-only="1">Unicode</option>
+            <option value="4">KaTeX</option>
+          </select>
+        </label>
         <span class="mdtheme" id="mdtheme" role="group" aria-label="Markdown preview">
           <button class="mdt sel" data-theme="auto"
             title="Follow your system's light/dark setting, which is what a reader of this file would get.">Auto</button>
@@ -455,6 +475,12 @@ let format = "pdf";
 /// a tab made switching cost a typeset and read as a format choice. It sits
 /// with the other controls over how the Markdown is PRESENTED.
 let mdSource = false;
+
+/// How equations are written, as the small integer the module takes: 0 the
+/// format's own default, 1 outlined SVG, 2 SVG text, 3 Unicode, 4 KaTeX.
+/// Unlike the theme, this changes the OUTPUT, so switching it does re-run the
+/// typesetter.
+let mathMode = 0;
 
 /// The rendered-Markdown preview's colour scheme: "auto" (follow the reader's
 /// system, which is what a reader of the file would get), "light" or "dark".
@@ -1052,6 +1078,36 @@ function setSource(on) {
   $("mdsrc").setAttribute("aria-pressed", String(on));
 }
 
+/// Markdown-only math modes are disabled on the HTML tab rather than offered
+/// and ignored.
+///
+/// The CLI makes `--unicode-math --format html` a usage ERROR: reading-order
+/// characters are a plain-TEXT fallback, and HTML already draws real glyphs,
+/// so there is nothing for it to mean. The module honours that by falling back
+/// to the format's default — which, offered in a picker, is the worst outcome:
+/// the reader chooses Unicode, gets byte-identical outlined SVG, and nothing
+/// says why. Measured before this guard: selecting Unicode on the HTML tab
+/// produced output identical to Outlined SVG.
+function syncMathOptions() {
+  const htmlTab = format === "html";
+  let reset = false;
+  $("mathmode").querySelectorAll("option[data-md-only]").forEach((o) => {
+    o.disabled = htmlTab;
+    if (htmlTab && o.selected) reset = true;
+  });
+  if (reset) {
+    $("mathmode").value = "0";
+    mathMode = 0;
+  }
+}
+
+$("mathmode").addEventListener("change", () => {
+  mathMode = Number($("mathmode").value);
+  // Unlike the theme and source toggles, this changes what the compiler
+  // EMITS, so it needs a real typeset rather than a re-present.
+  if (previewEl.style.display !== "none" || sourceEl.style.display !== "none") typeset();
+});
+
 $("mdsrc").addEventListener("click", () => {
   setSource(!mdSource);
   if (lastMarkdown !== null && format === "markdown") showMarkdownAs(lastMarkdown);
@@ -1082,6 +1138,8 @@ document.querySelectorAll(".fmt").forEach((b) => {
     // Drives `.mdtheme`'s visibility: the toggle means nothing on the other
     // three tabs.
     document.body.classList.toggle("fmt-markdown", format === "markdown");
+    document.body.classList.toggle("fmt-html", format === "html");
+    syncMathOptions();
     document.querySelectorAll(".fmt").forEach((x) => {
       const on = x === b;
       x.classList.toggle("sel", on);
@@ -1137,9 +1195,9 @@ function renderOnce() {
   const markdown = fmt === "markdown";
   const result =
     fmt === "html"
-      ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes)
+      ? rustyfi.compileHtml(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes, mathMode)
       : markdown
-        ? rustyfi.compileMarkdown(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes)
+        ? rustyfi.compileMarkdown(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes, mathMode)
         : rustyfi.compile(getDoc(), fontBytes, currentLang(), cjkBytes, mathBytes);
   const ms = Math.round(performance.now() - started);
   if (result.ok) {

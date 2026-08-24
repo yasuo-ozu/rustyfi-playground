@@ -388,6 +388,30 @@ const CJK_ABBREVS: [&str; 2] = ["ipaexm", "ipaexg"];
 /// CLI.
 const MATH_ABBREV: &str = "lmmath";
 
+/// How an equation is written into HTML or Markdown, as a small integer over
+/// the ABI — the same shape `lang` already uses, and for the same reason: the
+/// boundary is C, so an enum crosses as a number.
+///
+/// `rustyfi_html::MathMode` deliberately has no `Default`, because the right
+/// answer differs per FORMAT (the CLI decides it while parsing `--format`).
+/// The two defaults are reproduced here rather than invented: outlines for
+/// HTML, which reproduce the PDF exactly, and text for Markdown, which is
+/// compact and readable.
+fn math_mode(mode: u32, html: bool) -> rustyfi_html::MathMode {
+    use rustyfi_html::MathMode as M;
+    match mode {
+        1 => M::SvgOutline,
+        2 => M::SvgText,
+        3 => M::Unicode,
+        4 => M::Katex,
+        // 0, and anything unrecognised: the format's own default. An unknown
+        // value is a caller a version out of step, and the default is a better
+        // answer for it than an error the page cannot act on.
+        _ if html => M::SvgOutline,
+        _ => M::SvgText,
+    }
+}
+
 /// The size ratio the bundled `default-font.satysfi-hash` gives CJK, and the
 /// figure upstream SATySFi's own configuration uses: an IPAex em box is drawn
 /// to fill the full body, so it is set slightly smaller than the Latin face
@@ -521,7 +545,7 @@ pub fn compile_html_with_font_lang(
     font: Option<Vec<u8>>,
     lang: Lang,
 ) -> Result<String, String> {
-    compile_html_with_fonts_lang(source, font, None, None, lang)
+    compile_html_with_fonts_lang(source, font, None, None, 0, lang)
 }
 
 /// Markdown: the same recovered structure the reflowable HTML backend walks,
@@ -537,6 +561,7 @@ pub fn compile_markdown_with_fonts_lang(
     font: Option<Vec<u8>>,
     cjk: Option<Vec<u8>>,
     math: Option<Vec<u8>>,
+    math_mode_id: u32,
     lang: Lang,
 ) -> Result<String, String> {
     let store = font_store(font, cjk, math)?;
@@ -556,6 +581,7 @@ pub fn compile_markdown_with_fonts_lang(
             &doc.extras,
             &doc.reflow_links,
             &doc.reflow_dests,
+            math_mode(math_mode_id, false),
         ),
         None => rustyfi_html::render_markdown(
             doc.reflow_source.as_deref(),
@@ -563,6 +589,7 @@ pub fn compile_markdown_with_fonts_lang(
             &doc.extras,
             &doc.reflow_links,
             &doc.reflow_dests,
+            math_mode(math_mode_id, false),
         ),
     }
     .map_err(|e| e.to_string())
@@ -582,6 +609,7 @@ pub fn compile_html_with_fonts_lang(
     font: Option<Vec<u8>>,
     cjk: Option<Vec<u8>>,
     math: Option<Vec<u8>>,
+    math_mode_id: u32,
     lang: Lang,
 ) -> Result<String, String> {
     let store = font_store(font, cjk, math)?;
@@ -603,6 +631,7 @@ pub fn compile_html_with_fonts_lang(
             &doc.reflow_links,
             &doc.reflow_dests,
             &doc.reflow_frame_decos,
+            math_mode(math_mode_id, true),
         ),
         None => rustyfi_html::render_html_reflow_with_decos(
             doc.reflow_source.as_deref(),
@@ -612,6 +641,7 @@ pub fn compile_html_with_fonts_lang(
             &doc.reflow_links,
             &doc.reflow_dests,
             &doc.reflow_frame_decos,
+            math_mode(math_mode_id, true),
         ),
     }
     .map_err(|e| e.to_string())
@@ -1042,6 +1072,7 @@ pub unsafe extern "C" fn rustyfi_compile_html_fonts(
     cjk_len: usize,
     math: *const u8,
     math_len: usize,
+    math_mode_id: u32,
     lang: u32,
 ) -> *mut Output {
     let bytes: &[u8] = if src.is_null() || len == 0 {
@@ -1053,7 +1084,7 @@ pub unsafe extern "C" fn rustyfi_compile_html_fonts(
     let cjk = unsafe { borrowed_font(cjk, cjk_len) };
     let math = unsafe { borrowed_font(math, math_len) };
     let result = match std::str::from_utf8(bytes) {
-        Ok(source) => compile_html_with_fonts_lang(source, font, cjk, math, Lang::from_u32(lang))
+        Ok(source) => compile_html_with_fonts_lang(source, font, cjk, math, math_mode_id, Lang::from_u32(lang))
             .map(String::into_bytes),
         Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
     };
@@ -1075,6 +1106,7 @@ pub unsafe extern "C" fn rustyfi_compile_markdown_fonts(
     cjk_len: usize,
     math: *const u8,
     math_len: usize,
+    math_mode_id: u32,
     lang: u32,
 ) -> *mut Output {
     let bytes: &[u8] = if src.is_null() || len == 0 {
@@ -1086,7 +1118,7 @@ pub unsafe extern "C" fn rustyfi_compile_markdown_fonts(
     let cjk = unsafe { borrowed_font(cjk, cjk_len) };
     let math = unsafe { borrowed_font(math, math_len) };
     let result = match std::str::from_utf8(bytes) {
-        Ok(source) => compile_markdown_with_fonts_lang(source, font, cjk, math, Lang::from_u32(lang))
+        Ok(source) => compile_markdown_with_fonts_lang(source, font, cjk, math, math_mode_id, Lang::from_u32(lang))
             .map(String::into_bytes),
         Err(e) => Err(format!("document source is not valid UTF-8: {e}")),
     };

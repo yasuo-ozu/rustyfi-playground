@@ -65,8 +65,10 @@ function wrap(instance) {
     /// face and the document typesets `.notdef` WITHOUT failing, so leaving it
     /// out for a Japanese document is a silent wrong answer, not an error.
     compile(source, font, lang = 0, cjkFont = null, mathFont = null) {
+      // No math mode: the PDF has one rendering, and the flag is a usage error
+      // against `--format pdf` in the CLI for the same reason.
       return this.render(
-        ex.rustyfi_compile_with_fonts_lang, source, font, lang, cjkFont, mathFont, "pdf",
+        ex.rustyfi_compile_with_fonts_lang, source, font, lang, cjkFont, mathFont, null, "pdf",
       );
     },
 
@@ -79,9 +81,9 @@ function wrap(instance) {
     /// what tells it a run is fixed-pitch — the only signal separating a
     /// `+code` block from a wrapped paragraph. `cjkFont` puts `IPAexGothic` at
     /// the head of a Japanese run's family stack for the same reason.
-    compileHtml(source, font, lang = 0, cjkFont = null, mathFont = null) {
+    compileHtml(source, font, lang = 0, cjkFont = null, mathFont = null, mathMode = 0) {
       return this.render(
-        ex.rustyfi_compile_html_fonts, source, font, lang, cjkFont, mathFont, "html",
+        ex.rustyfi_compile_html_fonts, source, font, lang, cjkFont, mathFont, mathMode, "html",
       );
     },
 
@@ -93,9 +95,15 @@ function wrap(instance) {
     /// family name off the store to decide which runs are fixed-pitch, and
     /// that is the whole difference between a fenced code block and a
     /// paragraph of prose.
-    compileMarkdown(source, font, lang = 0, cjkFont = null, mathFont = null) {
+    /// `mathMode` selects how equations are written: 0 the format's own
+    /// default, 1 outlined SVG, 2 SVG text, 3 Unicode characters, 4 KaTeX.
+    /// Zero rather than a name because the boundary is C; `MathMode` has no
+    /// `Default` in the library precisely because the right answer differs per
+    /// format, so 0 means "let the format decide", not "the first variant".
+    compileMarkdown(source, font, lang = 0, cjkFont = null, mathFont = null, mathMode = 0) {
       return this.render(
-        ex.rustyfi_compile_markdown_fonts, source, font, lang, cjkFont, mathFont, "markdown",
+        ex.rustyfi_compile_markdown_fonts, source, font, lang, cjkFont, mathFont, mathMode,
+        "markdown",
       );
     },
 
@@ -104,7 +112,7 @@ function wrap(instance) {
     ///
     /// `field` names the successful payload, which is the only difference
     /// between them — the PDF is bytes, the two text formats are decoded.
-    render(fn, source, font, lang, cjkFont, mathFont, field) {
+    render(fn, source, font, lang, cjkFont, mathFont, mathMode, field) {
       const src = new TextEncoder().encode(source);
       let srcPtr = 0, srcLen = 0, fontPtr = 0, fontLen = 0;
       let cjkPtr = 0, cjkLen = 0, mathPtr = 0, mathLen = 0;
@@ -113,8 +121,13 @@ function wrap(instance) {
         [fontPtr, fontLen] = push(font);
         [cjkPtr, cjkLen] = push(cjkFont);
         [mathPtr, mathLen] = push(mathFont);
+        // The PDF entry point predates the math mode and does not take one;
+        // `mathMode === null` is how a caller says "this ABI has no such
+        // argument", as against 0, which means "the format's default".
         const { ok, bytes } = take(
-          fn(srcPtr, srcLen, fontPtr, fontLen, cjkPtr, cjkLen, mathPtr, mathLen, lang),
+          mathMode === null
+            ? fn(srcPtr, srcLen, fontPtr, fontLen, cjkPtr, cjkLen, mathPtr, mathLen, lang)
+            : fn(srcPtr, srcLen, fontPtr, fontLen, cjkPtr, cjkLen, mathPtr, mathLen, mathMode, lang),
         );
         if (!ok) return { ok: false, error: text(bytes) };
         // Only the PDF is bytes; every other backend's payload is UTF-8.
