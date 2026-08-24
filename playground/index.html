@@ -1117,6 +1117,57 @@ function restoreLiteralDollars(html) {
   return html.split(DOLLAR_SENTINEL).join('<span class="nomath">$</span>');
 }
 
+/// Carry each math span through `marked` untouched.
+///
+/// Markdown has no idea what math is, so it applies its own rules inside the
+/// delimiters. The one that bites is emphasis: `marked` rewrites
+/// `$${}_{x}li_{\to}m_{0}$$` to `$${}<em>{x}li</em>{\to}m_{0}$$`, and KaTeX
+/// is then handed markup instead of LaTeX and renders nothing. It needs an
+/// underscore that FOLLOWS punctuation to fire, which is why `$x_1$` and
+/// `$a_{i}^{k}$` come through unharmed and `{}_{…}` — an empty base, which is
+/// how a centred limit is written — does not.
+///
+/// So the spans are lifted out before `marked` sees them and put back after.
+/// The sentinel is a private-use codepoint, which no document contains and
+/// `marked` has no rule about.
+///
+/// Restored HTML-ESCAPED, because a span lifted from inside a fenced code
+/// block would otherwise come back as live markup. KaTeX reads text nodes, and
+/// entities are already decoded there, so escaping costs the math nothing.
+const MATH_SENTINEL = "\uE001";
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function protectMath(md) {
+  const spans = [];
+  const keep = (m) => {
+    spans.push(m);
+    return MATH_SENTINEL + (spans.length - 1) + MATH_SENTINEL;
+  };
+  // Display first: `$$…$$` would otherwise be seen as two empty inline spans.
+  const out = md
+    .replace(/\$\$[\s\S]+?\$\$/g, keep)
+    .replace(/\$[^\n$]+?\$/g, keep);
+  return { out, spans };
+}
+
+function restoreMath(html, spans) {
+  return html.replace(
+    new RegExp(MATH_SENTINEL + "(\\d+)" + MATH_SENTINEL, "g"),
+    (_, i) => escapeHtml(spans[Number(i)]),
+  );
+}
+
+/// `markdownToHtml`, with both KaTeX protections applied in the order they
+/// depend on: literal dollars first, so a `\$` cannot be mistaken for a
+/// delimiter when the math spans are lifted out.
+function katexMarkdown(md) {
+  const { out, spans } = protectMath(protectLiteralDollars(md));
+  return restoreLiteralDollars(restoreMath(markdownToHtml(out), spans));
+}
+
 function showMarkdown(md) {
   lastMarkdown = md;
   const page =
@@ -1128,9 +1179,7 @@ function showMarkdown(md) {
     // No closing tag: it is optional in HTML, and a literal "</body>" inside a
     // <script> is a footgun for anything that string-processes this page.
     "<body>" +
-    (mathMode === 4
-      ? restoreLiteralDollars(markdownToHtml(protectLiteralDollars(md)))
-      : markdownToHtml(md));
+    (mathMode === 4 ? katexMarkdown(md) : markdownToHtml(md));
   if (blobUrl) URL.revokeObjectURL(blobUrl);
   blobUrl = URL.createObjectURL(new Blob([page], { type: "text/html;charset=utf-8" }));
   previewEl.src = blobUrl;

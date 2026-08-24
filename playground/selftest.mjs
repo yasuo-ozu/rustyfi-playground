@@ -1467,6 +1467,16 @@ StdJa.document (| title = {t}; author = {a} |) '<
       (/ignoredClasses:\['nomath'\]/.test(page) && /function protectLiteralDollars/.test(page)),
     "prose containing ${ would render as mangled text in KaTeX mode",
   );
+  // Markdown has no idea what math is, so it applies emphasis inside the
+  // delimiters: `$${}_{x}li_{\to}m_{0}$$` became `$${}<em>{x}li</em>…$$` and
+  // KaTeX was handed markup instead of LaTeX. Needs an underscore FOLLOWING
+  // punctuation to fire, which is why `$x_1$` survived and a centred limit —
+  // written with an empty base, `{}_{…}` — did not.
+  check(
+    "math spans are carried through the Markdown renderer untouched",
+    !usesKatex || /function protectMath/.test(page),
+    "emphasis inside $…$ would destroy the LaTeX before KaTeX sees it",
+  );
   check(
     "KaTeX is only fetched when a KaTeX mode is chosen",
     katexUrls.length === 0 || /mathMode !== 4\) return ""/.test(page),
