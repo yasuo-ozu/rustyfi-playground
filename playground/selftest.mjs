@@ -1211,8 +1211,10 @@ document (|title = {t}; author = {a};|) '< +p { x } >
       JSON.stringify(d));
   }
 
-  // COMPLETION. Only ever after a sigil or a `Module.` prefix — the page will
-  // not even ask otherwise — and an empty answer means "show no popup".
+  // COMPLETION. The page asks on anything that could want a name — a sigil, a
+  // `Module.` prefix, a bare word, an empty record label slot — and the MODULE
+  // decides, because it is the side that knows the area. An empty answer means
+  // "show no popup", which is what prose gets.
   {
     const typing = `@require: stdja-mini
 @require: annot
@@ -1250,6 +1252,55 @@ StdJa.document (| title = {t}; author = {a} |) '<
       items.some((i) => i.label === "section"), JSON.stringify(items.slice(0, 4)));
     check("…and never re-inserts the sigil",
       items.every((i) => !i.label.startsWith("+")), JSON.stringify(items.slice(0, 4)));
+  }
+
+  // RECORD LABELS. The first line of almost every document is a record whose
+  // labels come from the doc class, not from the buffer — `document (| title =
+  // …` — so this is both the commonest completion in the language and the one
+  // a reader is least able to guess. It needs BOTH halves of the module: the
+  // slot is recognised by `rustyfi-lsp`, and the candidate comes out of the
+  // compiled-in package corpus, since nothing in the buffer mentions `title`
+  // until it has been typed.
+  {
+    // `stdja`, not `stdja-mini`: the mini class deliberately accepts ANY
+    // record shape and names no label in code, so there is nothing there to
+    // harvest. The full class declares the record type, which is exactly the
+    // source this feature reads.
+    const fresh = `@require: stdja
+document (| ti
+`;
+    const [l, c] = at(fresh, "(| ti", 5);
+    const items = rustyfi.completions(fresh, 0, l, c);
+    check("a record label slot offers the doc class's own labels",
+      items.some((i) => i.label === "title"), JSON.stringify(items.slice(0, 6)));
+    // The half that was wrong rather than missing: this slot used to answer
+    // with every VALUE in scope, which buried the one useful candidate.
+    // Checked by KIND (LSP `CompletionItemKind.Field` is 5) rather than by the
+    // shape of the label — a value named `titular` looks exactly like a label.
+    check("…and offers nothing but labels there",
+      items.length > 0 && items.every((i) => i.kind === 5),
+      JSON.stringify(items.slice(0, 6)));
+
+    // Past the `=` the same record is an ordinary expression again.
+    const valuePos = `@require: stdja-mini
+let titular = 1
+in
+document (| title = ti
+`;
+    const [vl, vc] = at(valuePos, "title = ti", 10);
+    const vals = rustyfi.completions(valuePos, 0, vl, vc);
+    check("past a field's `=` it is a value position again",
+      vals.some((i) => i.label === "titular"), JSON.stringify(vals.slice(0, 6)));
+
+    // `#` means field access in program text, not a value embed.
+    const access = `@require: stdja-mini
+let cfg = (| title = {t}; author = {a} |)
+let x = cfg#ti
+`;
+    const [al, ac] = at(access, "cfg#ti", 6);
+    const acc = rustyfi.completions(access, 0, al, ac);
+    check("`#` in program text completes a field name",
+      acc.some((i) => i.label === "title"), JSON.stringify(acc.slice(0, 6)));
   }
 
   // DEFINITION on a name from a package cannot jump — this page has one

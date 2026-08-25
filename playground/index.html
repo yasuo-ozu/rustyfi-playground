@@ -1758,13 +1758,31 @@ const COMPLETION_TYPE = {
   8: "interface", 9: "namespace", 20: "enum", 25: "type",
 };
 
-/// When to offer anything at all.
+/// When to ASK the module at all.
 ///
-/// Never on a bare word being typed in prose — that is the single most
-/// annoying thing an editor does, and in a SATySFi document most typing IS
-/// prose. A sigil or a `Module.` prefix is an unambiguous request for a name,
-/// and Ctrl-Space is an explicit one.
-const TRIGGER = /(?:[\\+#][A-Za-z0-9_-]*|[A-Z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*)+)$/;
+/// This used to be the whole policy — only a sigil or a `Module.` prefix got
+/// past it — on the grounds that a bare word in a SATySFi document is usually
+/// prose, and popping a list of names over a sentence is the single most
+/// annoying thing an editor does. That reasoning is right and the conclusion
+/// was too strong: **the module already refuses prose**, because it knows the
+/// AREA, which is the only thing that actually separates a name from a
+/// sentence. A bare word in program text is a name, and never offering one
+/// there meant the most ordinary completion in the language — a value, a
+/// record label — needed Ctrl-Space.
+///
+/// So this is now a cost guard rather than a policy: it admits anything that
+/// could want a name and lets the module decide, which it does in 0.3–0.9 ms
+/// for documents from 350 bytes to 14 kB (measured natively; the corpus index
+/// behind it is cached until a `@require:` line changes, so only the buffer is
+/// re-read). An answer of nothing shows no popup at all, so being wrong here
+/// is invisible rather than annoying.
+///
+/// The `(|` and `;` alternatives fire on an EMPTY word, which the others
+/// cannot: a record label slot is exactly where the reader does not know what
+/// to type, so the list has to appear before the first character rather than
+/// after it.
+const TRIGGER =
+  /(?:[\\+#][A-Za-z0-9_-]*|[A-Za-z_][A-Za-z0-9_-]*|\(\|[ \t]*|;[ \t]*|\.)$/;
 
 function completionSource(context) {
   if (!rustyfi || moduleTrapped) return null;

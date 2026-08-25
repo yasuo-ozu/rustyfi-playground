@@ -309,9 +309,39 @@ fn harvest(
     m: &Model<'_>,
     len: usize,
 ) {
+    // Record labels, which come from MENTIONS rather than bindings.
+    //
+    // A label binds nothing anywhere, so no `Def` will ever carry one and the
+    // loop below cannot find it. That used to mean the vocabulary had no
+    // labels at all — and the one place a playground visitor most needs them
+    // is the first line they write: `document (| ti`, whose `title` exists
+    // only inside the doc class's own record TYPE, in a package this buffer
+    // required but does not contain.
+    //
+    // Every mention in the package qualifies, including one inside a function
+    // body. A label is not scoped and not a member, so there is no narrower
+    // truth available; the alternative is the empty list this replaces.
+    for r in m.refs.iter().filter(|r| r.ns == Ns::Field) {
+        let key = (Ns::Field, r.name.clone(), None);
+        if slot.contains_key(&key) {
+            continue;
+        }
+        slot.insert(key, deps.entries.len());
+        deps.entries.push(Entry {
+            ns: Ns::Field,
+            name: r.name.clone(),
+            module: None,
+            // Unqualified by construction: `(| title = … |)` never writes a
+            // module path before a label.
+            global: true,
+            package: package.to_string(),
+            form: "record label",
+            ty: None,
+        });
+    }
     for d in &m.defs {
-        // A type variable is not a name anyone writes at a cursor, and a
-        // record label is structural — neither belongs in a vocabulary.
+        // A type variable is not a name anyone writes at a cursor. A record
+        // label is not a binding either, and is collected from mentions above.
         if matches!(d.ns, Ns::TypeVar | Ns::Field) {
             continue;
         }
@@ -803,6 +833,20 @@ impl Word {
             (Some('\\'), Area::Inline) => vec![Ns::InlineCmd],
             (Some('+'), Area::Block) => vec![Ns::BlockCmd],
             (Some('#'), Area::Inline | Area::Block | Area::Math) => vec![Ns::Value],
+            // `#` in PROGRAM text is field access, `cfg#title` — a different
+            // namespace behind the same character, exactly as `\` already
+            // means one thing in inline text and another in math.
+            (Some('#'), Area::Program) => vec![Ns::Field],
+            // A record LABEL slot takes labels and nothing else. Asked of
+            // `rustyfi_lsp` rather than decided here, so that this half and
+            // the buffer's own half cannot disagree about where a slot ends —
+            // they are merged into one list, and a disagreement would show as
+            // the corpus offering labels while the buffer offered values.
+            (None, Area::Program)
+                if rustyfi_lsp::record_label_slot(source, version, self.sigil_start) =>
+            {
+                vec![Ns::Field]
+            }
             (None, Area::Program) => vec![Ns::Value, Ns::Ctor, Ns::Module],
             _ => return None,
         })
