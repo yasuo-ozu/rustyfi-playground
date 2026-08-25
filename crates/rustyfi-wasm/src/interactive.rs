@@ -288,7 +288,88 @@ fn build_deps(model: &Model<'_>, lang: Lang) -> Deps {
             );
         }
     }
+    seed_primitives(&mut deps, &mut slot, lang);
     deps
+}
+
+/// Add the language's own vocabulary — `get-font-size`, `read-inline`,
+/// `inline-fil`, `embed-string` — to the index.
+///
+/// **A primitive appears in no `.satyh`.** It is built into the compiler, so
+/// an index assembled by walking package SOURCES, which is what everything
+/// above this does, can never contain one. That left the completion list
+/// missing the core of the language: 182 names under 0.0.6 and 206 under 0.1,
+/// including most of what a document that draws anything has to call.
+///
+/// Taken from `base_env_with_version` — the very environment the evaluator
+/// runs against — rather than from a list kept beside it. That is the whole
+/// reason this is cheap and cannot rot: the vocabulary IS the environment, so
+/// a primitive added, removed or version-gated in `primitives.rs` moves here
+/// in the same commit, and no test is needed to keep two lists in step because
+/// there is only one.
+///
+/// The type comes from `prim_types::primitive_type_with_version`, which
+/// answers for every one of them (measured: 182 of 182, 206 of 206) — so a
+/// primitive candidate carries a real signature rather than a bare name.
+///
+/// **Operators are excluded.** `base_env` binds `+`, `++`, `+.`, `::` and
+/// friends as ordinary names, and they are not what a completion list is for:
+/// they are punctuation, faster to type than to pick, and an empty prefix in
+/// program text would put them at the head of the list. The test is that the
+/// name starts with a letter, which is also exactly the set a client's own
+/// word-matching can filter as the user types.
+fn seed_primitives(
+    deps: &mut Deps,
+    slot: &mut HashMap<(Ns, String, Option<String>), usize>,
+    lang: Lang,
+) {
+    let version = lang.to_version();
+    let mut names = rustyfi_lang::primitives::base_env_with_version(version).names();
+    names.sort_unstable();
+    for name in names {
+        if !name.starts_with(|c: char| c.is_alphabetic()) {
+            continue;
+        }
+        // A package's own binding of the same spelling wins: it is what the
+        // document would actually reach, since a package prelude is spliced
+        // in over the base environment.
+        let key = (Ns::Value, name.clone(), None);
+        if slot.contains_key(&key) {
+            continue;
+        }
+        let ty = rustyfi_lang::prim_types::primitive_type_with_version(&name, version)
+            .map(|t| t.to_string());
+        slot.insert(key, deps.entries.len());
+        deps.entries.push(Entry {
+            ns: Ns::Value,
+            name,
+            module: None,
+            global: true,
+            package: "built-in".to_string(),
+            form: "primitive",
+            ty,
+        });
+    }
+
+    // The base TYPES, for the same reason and with the same gap: `inline-text`
+    // and `context` are built into the checker, appear in no `.satyh`, and so
+    // a type position offered nothing a document could actually write.
+    for name in rustyfi_lang::typecheck::base_type_names(version) {
+        let key = (Ns::Type, name.to_string(), None);
+        if slot.contains_key(&key) {
+            continue;
+        }
+        slot.insert(key, deps.entries.len());
+        deps.entries.push(Entry {
+            ns: Ns::Type,
+            name: name.to_string(),
+            module: None,
+            global: true,
+            package: "built-in".to_string(),
+            form: "base type",
+            ty: None,
+        });
+    }
 }
 
 /// Read one dependency file's declarations out of its model.
@@ -730,6 +811,21 @@ pub fn completions_json(source: &str, lang: Lang, line: u32, character: u32) -> 
         return out;
     }
 
+    // A header line is finished here, whatever the buffer half answered.
+    //
+    // Only `@require:` has candidates from the corpus, and it was handled
+    // above; every other header position takes the typesetter's answer — the
+    // keywords, or nothing — and must NOT fall through to the name lookup
+    // below. The fall-through is not hypothetical: once the primitives were
+    // seeded into the index, `@st` under 0.1 (where `@stage:` is correctly
+    // withheld) started matching `start-path` and `string-length`, and
+    // `@import: st` did the same. `rustyfi_lsp` knows it is looking at a
+    // header and this half does not, so the question has to be asked here too.
+    if in_header_line(source, byte) {
+        out.push(']');
+        return out;
+    }
+
     // …then the corpus. The word and the namespaces have to be recomputed
     // here, because `rustyfi_lsp::completions` decides both internally and
     // returns only the matches: when it answers nothing — which is most of the
@@ -882,10 +978,34 @@ impl Word {
             {
                 vec![Ns::Field]
             }
+            // A TYPE position — `let f : leng`, `type t = leng`. Asked of
+            // `rustyfi_lsp` for the same reason, and missing entirely before:
+            // this half had no notion of one, so it answered with the corpus's
+            // VALUES (`length-abs`, `length-min`) where only a type can go,
+            // while the buffer's half correctly offered nothing.
+            (None, Area::Program)
+                if rustyfi_lsp::type_position_slot(source, version, self.sigil_start) =>
+            {
+                vec![Ns::Type]
+            }
             (None, Area::Program) => vec![Ns::Value, Ns::Ctor, Ns::Module],
             _ => return None,
         })
     }
+}
+
+/// Is the cursor on a file-header line — a line whose first non-blank
+/// character is `@`?
+///
+/// Deliberately about the LINE rather than about what has been typed on it, so
+/// it covers a keyword being written (`@st`), a finished header
+/// (`@import: st`) and everything between. A header is one line by
+/// construction, so the line is the whole context.
+fn in_header_line(source: &str, byte: usize) -> bool {
+    let line_start = source[..byte].rfind('\n').map_or(0, |i| i + 1);
+    source[line_start..byte]
+        .trim_start_matches([' ', '\t'])
+        .starts_with('@')
 }
 
 /// Is the cursor typing the PACKAGE NAME of a `@require:`, and if so where

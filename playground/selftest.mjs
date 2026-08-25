@@ -1254,6 +1254,57 @@ StdJa.document (| title = {t}; author = {a} |) '<
       items.every((i) => !i.label.startsWith("+")), JSON.stringify(items.slice(0, 4)));
   }
 
+  // THE LANGUAGE'S OWN VOCABULARY. A primitive is built into the compiler and
+  // appears in no `.satyh`, so an index assembled by walking package SOURCES
+  // — which is what everything else here is — could never contain one. That
+  // left the completion list missing the core of the language: `read-inline`,
+  // `inline-fil`, `get-font-size`, 182 names under 0.0.6 and 206 under 0.1.
+  //
+  // Taken from `base_env_with_version`, the environment the evaluator actually
+  // runs against, so the list cannot drift from what exists.
+  {
+    const prim = "@require: stdja\nlet z = read-in\n";
+    const [l, c] = at(prim, "= read-in", 9);
+    const items = rustyfi.completions(prim, 0, l, c);
+    const ri = items.find((i) => i.label === "read-inline");
+    check("a primitive is offered", ri !== undefined, JSON.stringify(items.slice(0, 5)));
+    // With its real signature, not a bare name: the type comes from
+    // `prim_types`, which answers for every primitive.
+    check("...carrying the type the compiler gives it",
+      ri !== undefined && ri.detail.includes("context") && ri.detail.includes("inline-boxes"),
+      JSON.stringify(ri));
+    check("...and saying it is built in", ri !== undefined && ri.source === "built-in",
+      JSON.stringify(ri));
+    // Operators are bound in the same environment and are deliberately NOT
+    // offered: punctuation is faster to type than to pick, and an empty prefix
+    // in program text would put `+`, `++` and `::` at the head of the list.
+    const anyOp = "@require: stdja\nlet z = \n";
+    const [ol, oc] = at(anyOp, "= \n", 2);
+    check("an operator is not a completion candidate",
+      rustyfi.completions(anyOp, 0, ol, oc).every((i) => /^[A-Za-z]/.test(i.label)),
+      JSON.stringify(rustyfi.completions(anyOp, 0, ol, oc).filter((i) => !/^[A-Za-z]/.test(i.label))));
+  }
+
+  // TYPE POSITIONS. Two bugs at once before: an ascription offered nothing,
+  // and a type synonym's right-hand side offered VALUES where only a type can
+  // go. Both halves are checked, because fixing one without the other is
+  // invisible.
+  {
+    const ann = "@require: stdja\nlet f : inline-tex\n";
+    const [al, ac] = at(ann, ": inline-tex", 12);
+    check("an ascription offers a base type",
+      rustyfi.completions(ann, 0, al, ac).some((i) => i.label === "inline-text"),
+      JSON.stringify(rustyfi.completions(ann, 0, al, ac).slice(0, 5)));
+    const syn = "@require: stdja\ntype t = leng\n";
+    const [sl, sc] = at(syn, "= leng", 6);
+    const st = rustyfi.completions(syn, 0, sl, sc);
+    check("a type synonym's right-hand side offers a type",
+      st.some((i) => i.label === "length"), JSON.stringify(st.slice(0, 5)));
+    // The wrong answer it used to give. `length-abs` is a VALUE.
+    check("...and no longer offers values there",
+      !st.some((i) => i.label === "length-abs"), JSON.stringify(st.slice(0, 5)));
+  }
+
   // HEADERS. `@require:` is the one completion answered out of the bundled
   // corpus rather than out of the document — `rustyfi-lsp` is single-buffer and
   // has no library root to enumerate, while this build has every package
