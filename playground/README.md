@@ -196,6 +196,20 @@ together add (265,862 bytes), because it instantiates `Unparse` over both
 grammars' entire CSTs to get each declaration's exact extent. A jump list does
 not earn a megabyte on every page load.
 
+## The output tabs, from the keyboard
+
+The four tabs are a real ARIA tablist rather than four buttons wearing the
+role. **Arrow Left/Right** move between them and wrap; **Home**/**End** jump to
+the ends; **Enter** or **Space** chooses. Only the *selected* tab is in the
+page's tab order, so Tab enters the group once and returns you to the tab you
+chose rather than to the last one you happened to arrow past.
+
+Activation is **manual** — the arrows move focus and select nothing. The ARIA
+pattern prefers automatic activation, where focus and selection travel
+together, but only when showing a panel is cheap. Here it is the opposite:
+selecting a tab re-runs the typesetter, so arrowing from PDF to LaTeX would
+start three compiles of your document on the way to the one you wanted.
+
 ## The editor
 
 CodeMirror 6, **committed to this repository** under `vendor/codemirror.js` and

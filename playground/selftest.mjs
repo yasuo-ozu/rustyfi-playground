@@ -1692,6 +1692,32 @@ let x = cfg#ti
     !/id="format"/.test(page) && (page.match(/class="fmt[ "]/g) ?? []).length === 4,
     `${(page.match(/class="fmt[ "]/g) ?? []).length} tabs, dropdown ${/id="format"/.test(page)}`);
   check("the LaTeX tab is one of them", /data-fmt="latex"/.test(page));
+  // `role="tablist"` is a PROMISE to a screen reader that the arrow keys move
+  // between these and that Tab treats them as one stop. Four separately
+  // tabbable buttons with no key handling is what it meant before.
+  {
+    const zero = (page.match(/class="fmt[^"]*"[^>]*tabindex="0"/g) ?? []).length;
+    const minus = (page.match(/class="fmt[^"]*"[^>]*tabindex="-1"/g) ?? []).length;
+    check("exactly one tab starts in the page's tab order", zero === 1 && minus === 3,
+      `${zero} at tabindex 0, ${minus} at -1`);
+    check("the tablist answers the arrow keys",
+      /function tabKeydown/.test(page) &&
+        /"ArrowRight"/.test(page) && /"ArrowLeft"/.test(page) &&
+        /"Home"/.test(page) && /"End"/.test(page),
+      "the role promises arrow navigation that nothing implements");
+    check("the roving tabindex is maintained where selection is",
+      /x\.tabIndex = on \? 0 : -1/.test(page),
+      "Tab would return to the last tab visited rather than the selected one");
+    // MANUAL activation, and this is the deliberate half. The ARIA pattern
+    // prefers selecting as focus arrives, but only when showing a panel is
+    // cheap; here each selection re-runs the typesetter, so arrowing across
+    // the row would start three compiles on the way to the one you wanted.
+    // Pinned by what `tabKeydown` does NOT contain.
+    const kd = (page.match(/function tabKeydown[\s\S]*?\n}/) ?? [""])[0];
+    check("the arrows move focus without selecting",
+      kd.includes(".focus()") && !kd.includes("selectFormat") && !kd.includes(".click()"),
+      "arrowing across the tabs would compile the document once per tab");
+  }
   // `OutputFormat::Latex` admits NO math mode — a `.tex` reaches a math
   // typesetter by definition — so the picker must not appear on that tab. This
   // is the `syncMathOptions` rule one step earlier: there, a mode that would be

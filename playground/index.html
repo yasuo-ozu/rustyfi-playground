@@ -427,10 +427,16 @@
     </section>
     <section class="pane">
       <h2>
+        <!-- A ROVING TABINDEX: exactly one tab is in the page's tab order at a
+             time, and the arrow keys move between them (`tabKeydown`). That is
+             what `role="tablist"` promises a screen reader, and four separately
+             tabbable buttons is what it got before. The selected tab is the one
+             that carries `tabindex="0"`, so Tab returns you to where you were
+             rather than to the start of the group. -->
         <span class="fmts" role="tablist" aria-label="Output format">
-          <button class="fmt sel" data-fmt="pdf" role="tab" aria-selected="true"
+          <button class="fmt sel" data-fmt="pdf" role="tab" aria-selected="true" tabindex="0"
             title="The page-faithful output: real pages, the port's own line breaking.">PDF</button>
-          <button class="fmt" data-fmt="html" role="tab" aria-selected="false"
+          <button class="fmt" data-fmt="html" role="tab" aria-selected="false" tabindex="-1"
             title="One continuous, self-contained web document — no pages, and the browser does the line breaking.">HTML</button>
           <!-- "MD", not "Markdown": with a fourth tab beside it the row is
                wide enough to wrap onto a second line, and `.fmts` wraps rather
@@ -438,10 +444,10 @@
                would recognise. `aria-label` keeps the accessible name whole —
                an abbreviation is a visual economy and must not become one a
                screen reader has to spell out. -->
-          <button class="fmt" data-fmt="markdown" role="tab" aria-selected="false"
+          <button class="fmt" data-fmt="markdown" role="tab" aria-selected="false" tabindex="-1"
             aria-label="Markdown"
             title="The Markdown, rendered — what a reader of the file would see.">MD</button>
-          <button class="fmt" data-fmt="latex" role="tab" aria-selected="false"
+          <button class="fmt" data-fmt="latex" role="tab" aria-selected="false" tabindex="-1"
             title="A complete, compilable .tex document — the same structure handed to another typesetter. Shown as source, because compiling LaTeX needs a TeX engine this page does not have.">LaTeX</button>
         </span>
         <!-- No standing "Math" caption beside the control: the unset option
@@ -1432,25 +1438,71 @@ document.querySelectorAll(".mdt[data-theme]").forEach((b) => {
   });
 });
 
+/// Every format tab, in document order — the order the arrow keys walk.
+const tabs = () => [...document.querySelectorAll(".fmt")];
+
+/// Select `b`: the single owner of what "selected" means across the three
+/// things that have to agree — the styling, `aria-selected`, and which tab
+/// holds the roving `tabindex="0"`.
+///
+/// Lifted out of the click handler because the keyboard now has its own way
+/// in, and two copies would drift. A missed `tabindex` update in particular is
+/// invisible until someone tabs away and back and lands on the wrong tab.
+function selectFormat(b) {
+  if (b.dataset.fmt === format) return;
+  format = b.dataset.fmt;
+  // Drives `.mdtheme`'s visibility: the toggle means nothing on the other
+  // three tabs.
+  document.body.classList.toggle("fmt-markdown", format === "markdown");
+  document.body.classList.toggle("fmt-html", format === "html");
+  syncMathOptions();
+  for (const x of tabs()) {
+    const on = x === b;
+    x.classList.toggle("sel", on);
+    x.setAttribute("aria-selected", String(on));
+    x.tabIndex = on ? 0 : -1;
+  }
+  // Only re-render if the pane is already showing a result; switching tab
+  // before the first Typeset should not start a compile on its own.
+  if (previewEl.style.display !== "none" || sourceEl.style.display !== "none") typeset();
+}
+
 document.querySelectorAll(".fmt").forEach((b) => {
-  b.addEventListener("click", () => {
-    if (b.dataset.fmt === format) return;
-    format = b.dataset.fmt;
-    // Drives `.mdtheme`'s visibility: the toggle means nothing on the other
-    // three tabs.
-    document.body.classList.toggle("fmt-markdown", format === "markdown");
-    document.body.classList.toggle("fmt-html", format === "html");
-    syncMathOptions();
-    document.querySelectorAll(".fmt").forEach((x) => {
-      const on = x === b;
-      x.classList.toggle("sel", on);
-      x.setAttribute("aria-selected", String(on));
-    });
-    // Only re-render if the pane is already showing a result; switching tab
-    // before the first Typeset should not start a compile on its own.
-    if (previewEl.style.display !== "none" || sourceEl.style.display !== "none") typeset();
-  });
+  b.addEventListener("click", () => selectFormat(b));
 });
+
+/// Arrow-key navigation across the tablist, with MANUAL activation: the arrows
+/// move focus and nothing else, and Enter or Space then chooses.
+///
+/// The ARIA tabs pattern offers both, and prefers AUTOMATIC activation —
+/// selecting as focus arrives — when showing a panel is cheap. Here it is the
+/// opposite of cheap: selecting a tab re-runs the whole typesetter, so
+/// arrowing from PDF to LaTeX would start three compiles on the way to the one
+/// you wanted. Manual activation is the pattern's own answer to exactly that.
+///
+/// It also needs no key handling of its own for the activation half: a
+/// `<button>` already fires `click` on Enter and on Space, so choosing stays
+/// on the single path `selectFormat` owns.
+function tabKeydown(e) {
+  const all = tabs();
+  const i = all.indexOf(document.activeElement);
+  if (i < 0) return;
+  const to =
+    e.key === "ArrowRight" ? (i + 1) % all.length
+    : e.key === "ArrowLeft" ? (i - 1 + all.length) % all.length
+    : e.key === "Home" ? 0
+    : e.key === "End" ? all.length - 1
+    : -1;
+  if (to < 0) return;
+  e.preventDefault();
+  // Focus alone. The roving `tabindex` follows SELECTION rather than focus, so
+  // a tab reached by arrow is focusable while focus is on it and leaves the
+  // tab order again afterwards — which is what keeps a later Tab landing on
+  // the selected tab rather than on the last one merely visited.
+  all[to].focus();
+}
+
+document.querySelector(".fmts").addEventListener("keydown", tabKeydown);
 
 async function typeset() {
   if (!rustyfi) return;
