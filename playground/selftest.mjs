@@ -1254,6 +1254,55 @@ StdJa.document (| title = {t}; author = {a} |) '<
       items.every((i) => !i.label.startsWith("+")), JSON.stringify(items.slice(0, 4)));
   }
 
+  // HEADERS. `@require:` is the one completion answered out of the bundled
+  // corpus rather than out of the document — `rustyfi-lsp` is single-buffer and
+  // has no library root to enumerate, while this build has every package
+  // compiled in. It is also the name a visitor can least guess, which is why
+  // the page carries a Packages panel at all.
+  {
+    // The KEYWORD half, which the typesetter answers: `@re` does not lex, so
+    // the module reads it from the text. `@stage:` is 0.0.6 only -- 0.1 treats
+    // it as a hard lexer error -- and the page has a Lang selector, so getting
+    // that wrong would offer a compile failure on one of the two settings.
+    const kw = "@re\n";
+    const [kl, kc] = at(kw, "@re", 3);
+    const kws = rustyfi.completions(kw, 0, kl, kc);
+    check("a half-typed header completes to the keyword",
+      kws.some((i) => i.label === "@require:"), JSON.stringify(kws));
+    const st = "@st\n";
+    const [tl, tc] = at(st, "@st", 3);
+    check("the stage header is offered under 0.0.6",
+      rustyfi.completions(st, 0, tl, tc).some((i) => i.label === "@stage:"));
+    const st01 = rustyfi.completions(st, 1, tl, tc);
+    check("...and withheld under 0.1, where the lexer rejects it",
+      st01.length === 0, JSON.stringify(st01));
+
+    const req = "@require: std\n";
+    const [l, c] = at(req, ": std", 5);
+    const items = rustyfi.completions(req, 0, l, c);
+    check("a `@require:` completes a bundled package name",
+      items.some((i) => i.label === "stdja"), JSON.stringify(items.slice(0, 6)));
+    // The asking generation sorts first, mirroring `resolve_require`'s own
+    // search: a 0.0.6 document reaches 0.1 packages through the cross-version
+    // fallback, so both are offered and the nearer one leads.
+    const i006 = items.findIndex((i) => i.label === "stdja");
+    const i01 = items.findIndex((i) => i.label === "std-ja");
+    check("\u2026with the document's own generation first",
+      i006 >= 0 && i01 >= 0 && i006 < i01, `stdja at ${i006}, std-ja at ${i01}`);
+    // A slash is part of a package name, not a boundary.
+    const sub = "@require: base/ar\n";
+    const [sl, sc] = at(sub, ": base/ar", 9);
+    check("\u2026and completes a package name containing a slash",
+      rustyfi.completions(sub, 0, sl, sc).some((i) => i.label === "base/array"));
+    // `@import:` resolves relative to the importing file's OWN directory, and
+    // this page has one file, so there is nothing it could ever name. Offering
+    // the bundled list there would be offering names that cannot resolve.
+    const imp = "@import: st\n";
+    const [il, ic] = at(imp, ": st", 4);
+    check("an `@import:` offers nothing, having no directory to resolve against",
+      rustyfi.completions(imp, 0, il, ic).length === 0);
+  }
+
   // RECORD LABELS. The first line of almost every document is a record whose
   // labels come from the doc class, not from the buffer — `document (| title =
   // …` — so this is both the commonest completion in the language and the one

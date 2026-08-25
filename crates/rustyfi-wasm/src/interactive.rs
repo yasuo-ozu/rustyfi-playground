@@ -695,6 +695,41 @@ pub fn completions_json(source: &str, lang: Lang, line: u32, character: u32) -> 
         emit(&mut out, &c.label, &c.detail, c.kind, "this document", c.range);
     }
 
+    // A PACKAGE NAME after `@require:`. Answered here and nowhere else,
+    // because it is the one completion in the language that is not about the
+    // document at all: `rustyfi_lsp` is single-buffer and has no library root
+    // to enumerate, while this build has all 118 packages compiled in.
+    //
+    // It is also the completion a visitor needs most and can guess least. The
+    // page carries a whole Packages panel for exactly this reason; the panel
+    // is a list to read, and this is the same list where the name is typed.
+    if let Some((start, needle)) = require_package_position(source, byte) {
+        let range = ByteRange::new(start, byte);
+        // The asking generation first, then the other, mirroring
+        // `resolve_require`'s own search: a name is looked for in the
+        // document's own corpus and falls back across the version boundary,
+        // so both really are reachable and the preferred one should sort
+        // first.
+        let other = match lang {
+            Lang::V0_0 => Lang::V0_1,
+            Lang::V0_1 => Lang::V0_0,
+        };
+        for (l, from) in [(lang, "bundled"), (other, "bundled, other generation")] {
+            let mut names = crate::package_names_for(l);
+            names.sort_unstable();
+            for name in names {
+                if name.starts_with(needle) {
+                    // `Module` (9): a package is the closest thing the LSP
+                    // vocabulary has to a namespace you name to get its
+                    // contents, which is what a `@require:` does.
+                    emit(&mut out, name, "package", 9, from, range);
+                }
+            }
+        }
+        out.push(']');
+        return out;
+    }
+
     // …then the corpus. The word and the namespaces have to be recomputed
     // here, because `rustyfi_lsp::completions` decides both internally and
     // returns only the matches: when it answers nothing — which is most of the
@@ -851,6 +886,32 @@ impl Word {
             _ => return None,
         })
     }
+}
+
+/// Is the cursor typing the PACKAGE NAME of a `@require:`, and if so where
+/// does that name start and what has been typed of it?
+///
+/// `@require:` only — deliberately not `@import:`. An import resolves relative
+/// to the importing file's own directory, and this page has exactly one file,
+/// so there is never anything an import could name. Offering the bundled
+/// package list there would be offering names that cannot resolve.
+///
+/// A package name may hold `/` and `.` (`base/array`, `easytable/easytable`),
+/// so the name is everything from after the colon's spacing to the cursor,
+/// and any whitespace inside it means the header is already complete and the
+/// cursor is past it.
+fn require_package_position(source: &str, byte: usize) -> Option<(usize, &str)> {
+    let line_start = source[..byte].rfind('\n').map_or(0, |i| i + 1);
+    let line = &source[line_start..byte];
+    let rest = line.trim_start_matches([' ', '\t']);
+    let indent = line.len() - rest.len();
+    let after = rest.strip_prefix("@require:")?;
+    let name = after.trim_start_matches([' ', '\t']);
+    if name.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let start = line_start + indent + "@require:".len() + (after.len() - name.len());
+    Some((start, name))
 }
 
 fn word_before(source: &str, byte: usize) -> Word {

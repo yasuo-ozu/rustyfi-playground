@@ -523,7 +523,7 @@ import { markdownToHtml } from "./vendor/markdown.js";
 // against a WebAssembly module of 7.6 MB / 2.0 MB gzipped — about 5% more to
 // download, for the editor the four language features below need.
 import {
-  autocompletion, bracketMatching, Compartment, completionKeymap, defaultKeymap,
+  autocompletion, bracketMatching, closeCompletion, Compartment, completionKeymap, defaultKeymap,
   drawSelection, dropCursor, EditorState, EditorView, forceLinting, highlightActiveLine,
   highlightActiveLineGutter, highlightSpecialChars, history, historyKeymap,
   HighlightStyle, hoverTooltip, indentUnit, indentWithTab, keymap, lineNumbers,
@@ -1781,8 +1781,34 @@ const COMPLETION_TYPE = {
 /// cannot: a record label slot is exactly where the reader does not know what
 /// to type, so the list has to appear before the first character rather than
 /// after it.
+///
+/// Their trailing `\s*` spans NEWLINES, and that is the common case rather
+/// than a generalisation. A record is normally written down the page —
+///
+///     document (|
+///       title = {…};
+///       author = {…};
+///     |)
+///
+/// — so the label slot is reached by pressing Enter after the `(|` or the `;`,
+/// not by typing on the same line. With `[ \t]*` the list appeared only for
+/// the one-line form and was silent for the shape almost every document
+/// actually has. The module is whitespace-insensitive here already: it decides
+/// the slot from the TOKENS before the cursor, where a newline is not a token.
+/// The two `@` alternatives are the file HEADERS, and they stand apart from
+/// the rest because a header is not a name: `@re` completes to the KEYWORD
+/// `@require:`, and what follows a complete `@require:` is a PACKAGE — the one
+/// completion answered out of the bundled corpus rather than out of the
+/// document, and the one a visitor can least guess. Both fire on an empty
+/// word: `@` alone offers the headers, `@require:` alone offers every bundled
+/// package, and a header line is another place where the reader has nothing to
+/// type yet.
+///
+/// The package alternative stops at `[ \t]*` rather than `\s*`, unlike the
+/// record ones: a header is one line, so a newline after the colon means the
+/// header was left empty and the cursor has moved on into the document.
 const TRIGGER =
-  /(?:[\\+#][A-Za-z0-9_-]*|[A-Za-z_][A-Za-z0-9_-]*|\(\|[ \t]*|;[ \t]*|\.)$/;
+  /(?:@[A-Za-z]*|@require:[ \t]*|[\\+#][A-Za-z0-9_-]*|[A-Za-z_][A-Za-z0-9_-]*|\(\|\s*|;\s*|\.)$/;
 
 function completionSource(context) {
   if (!rustyfi || moduleTrapped) return null;
@@ -1948,7 +1974,18 @@ view = new EditorView({
     lintGutter(),
     lintConfig.of(linter(analyse, { delay: ANALYSE_DELAY_MS })),
     keymap.of([
-      { key: "Mod-Enter", run: () => (typeset(), true) },
+      // Typeset. Bound for BOTH `Mod-Enter` and `Ctrl-Enter`, which are the
+      // same chord only off a Mac: there `Mod` is Cmd, so a plain `Mod-Enter`
+      // leaves Ctrl-Enter unbound inside the editor and the page's own
+      // document-level fallback cannot help — it fires only when the editor
+      // does NOT have focus, which is exactly when it does.
+      //
+      // The completion popup is dismissed first. Typesetting with it open
+      // leaves a list of candidates floating over the result, and `Enter`
+      // belongs to the popup while it is up, so the two keys have to disagree
+      // about what Enter means without disagreeing about this one.
+      { key: "Mod-Enter", run: (v) => (closeCompletion(v), typeset(), true) },
+      { key: "Ctrl-Enter", run: (v) => (closeCompletion(v), typeset(), true) },
       { key: "F12", run: (v) => goToDefinition(v, v.state.selection.main.head) },
       indentWithTab,
       ...completionKeymap,
