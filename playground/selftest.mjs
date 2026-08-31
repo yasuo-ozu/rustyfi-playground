@@ -1692,6 +1692,133 @@ let x = cfg#ti
     !/id="format"/.test(page) && (page.match(/class="fmt[ "]/g) ?? []).length === 4,
     `${(page.match(/class="fmt[ "]/g) ?? []).length} tabs, dropdown ${/id="format"/.test(page)}`);
   check("the LaTeX tab is one of them", /data-fmt="latex"/.test(page));
+
+  // THE FORMAT BUTTON, and the wiring behind it. `id="reformat"` and not
+  // `id="format"`: that spelling was the OLD output-format dropdown's, the
+  // check above exists to catch a stale one, and the page also has a
+  // module-level `format` variable — three ways for one name to mean the wrong
+  // thing, which is how this button was first written and immediately caught.
+  check("the page has a Format button", /id="reformat"/.test(page),
+    "nothing in the page reaches rustyfi_format, so the ABI export is dead code");
+  check("Format is bound to Shift-Alt-F", /"Shift-Alt-f"/.test(page),
+    "the keymap entry is gone, so only the button works");
+  check("the Format button is disabled until the module loads",
+    /id="reformat"[^>]*\bdisabled\b/.test(page),
+    "pressing it before the module arrives would throw");
+
+  // `minimalChange` is the one piece of index arithmetic on this path, and the
+  // failure it protects against is silent: the formatter answers with the
+  // whole new document, and this trims it to the ONE edit CodeMirror maps the
+  // caret through. An off-by-one here does not throw — it corrupts the buffer.
+  //
+  // The page cannot be loaded from here (no DOM), but the function is pure, so
+  // it is lifted straight out of the page text and fuzzed. Lifting rather than
+  // copying is the point: a copy would keep passing after the page changed.
+  {
+    const lifted = page.match(/\nfunction minimalChange\(a, b\) \{[\s\S]*?\n\}\n/);
+    check("minimalChange can be lifted out of the page", lifted !== null,
+      "the function was renamed or reindented; this fuzz is now testing nothing");
+    if (lifted !== null) {
+      const minimalChange = new Function(`${lifted[0]}\nreturn minimalChange;`)();
+
+      // A seeded xorshift, so a failure names a seed that reproduces it.
+      let seed = 0x9e3779b9;
+      const rnd = (n) => {
+        seed ^= seed << 13; seed >>>= 0;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5; seed >>>= 0;
+        return seed % n;
+      };
+      // Astral characters (two UTF-16 code units) are the whole reason the
+      // function has surrogate handling at all; the two Japanese characters
+      // are there because they are what a real document is full of.
+      //
+      // The astral four are chosen as TWO pairs, and the choice is the whole
+      // test. U+1F389 and U+1F38A share a HIGH surrogate (D83C) and differ in
+      // the low, which is what reaches the prefix guard; U+1F389 and U+1F789
+      // share a LOW surrogate (DF89) and differ in the high, which is the only
+      // way to reach the suffix one. With just the first pair — which is what
+      // this fixture had at first — deleting the suffix guard changed nothing
+      // and 20 000 cases said the code was fine.
+      const ALPHABET = [
+        "a", "b", " ", "\n", "\t", "あ", "も",
+        "🎉", "🎊", "🞉", "🞊",
+      ];
+      // Generates an ARRAY of whole characters, never a string sliced at a
+      // code-unit index. The first draft of this fuzz spliced `a` at random
+      // code-unit offsets, which put lone surrogates into the TARGET — so it
+      // failed 2 469 times out of 20 000 while `minimalChange` was correct.
+      // The guarantee under test only means anything between two well-formed
+      // strings, which is what the formatter actually returns, so the fixture
+      // has to produce well-formed ones.
+      const gen = (n) => {
+        const out = [];
+        for (let i = 0; i < n; i++) out.push(ALPHABET[rnd(ALPHABET.length)]);
+        return out;
+      };
+      const lone = (str) => {
+        for (let i = 0; i < str.length; i++) {
+          const c = str.charCodeAt(i);
+          if (c >= 0xd800 && c <= 0xdbff) {
+            const next = str.charCodeAt(i + 1);
+            if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+            i++;
+          } else if (c >= 0xdc00 && c <= 0xdfff) {
+            return true;
+          }
+        }
+        return false;
+      };
+
+      let wrong = 0, split = 0, nulls = 0, malformed = 0, cases = 0;
+      for (let i = 0; i < 20000; i++) {
+        const chars = gen(rnd(24));
+        const a = chars.join("");
+        // Half the cases mutate `a` — which is what a reformat looks like, and
+        // is where a long common prefix AND a long common suffix meet — and
+        // half are independent, which stresses the two scans separately.
+        const b = i % 2 === 0
+          ? [...chars.slice(0, rnd(chars.length + 1)), ...gen(rnd(4)),
+             ...chars.slice(rnd(chars.length + 1))].join("")
+          : gen(rnd(24)).join("");
+        cases++;
+        // The fixture's own guard: if this ever trips, the generator has gone
+        // back to splicing mid-character and the split-pair check below is
+        // vacuous.
+        if (lone(a) || lone(b)) { malformed++; continue; }
+        const change = minimalChange(a, b);
+        if (change === null) {
+          if (a !== b) nulls++;
+          continue;
+        }
+        if (a === b) { nulls++; continue; }
+        // The invariant the caller depends on.
+        if (a.slice(0, change.from) + change.insert + a.slice(change.to) !== b) {
+          if (wrong === 0) {
+            console.error(`     first mismatch: a=${JSON.stringify(a)} b=${JSON.stringify(b)} ` +
+              `change=${JSON.stringify(change)}`);
+          }
+          wrong++;
+        }
+        // And the one CodeMirror depends on: both ends sit on a character
+        // boundary, and nothing lifted out of `a` or put into `b` is half a
+        // pair. A split pair does not throw — it writes a replacement
+        // character into a Japanese document and moves on.
+        if (lone(a.slice(0, change.from)) || lone(a.slice(change.to)) || lone(change.insert)) {
+          split++;
+        }
+      }
+      check(`minimalChange rebuilds the target (${cases} cases)`, wrong === 0,
+        `${wrong} mismatches`);
+      check("minimalChange never splits a surrogate pair", split === 0,
+        `${split} split pairs`);
+      check("minimalChange returns null exactly when the texts are equal", nulls === 0,
+        `${nulls} disagreements`);
+      check("the fuzz generated only well-formed text", malformed === 0,
+        `${malformed} malformed inputs — the split-pair check above was vacuous ` +
+        "for those cases");
+    }
+  }
   // `role="tablist"` is a PROMISE to a screen reader that the arrow keys move
   // between these and that Tab treats them as one stop. Four separately
   // tabbable buttons with no key handling is what it meant before.
@@ -1996,6 +2123,146 @@ let x = cfg#ti
       );
     }
   }
+}
+
+// THE FORMATTER, which is `rustyfi_lsp`'s `textDocument/formatting` with the
+// protocol taken off. What is worth pinning here is not "it produces tidy
+// output" — taste does not belong in a self-test — but the three promises the
+// page makes to a reader who presses the button:
+//
+//   1. it changes whitespace in PROGRAM text and nothing else, so the compiled
+//      result is unchanged;
+//   2. its output is a fixed point, so format-on-save does not rewrite a file
+//      forever; and
+//   3. it either does that or DECLINES, and a decline changes nothing.
+//
+// (1) is checked the only way it can be checked from out here: compile both
+// and compare the bytes. A formatter that dropped or reordered a token would
+// still return plausible text, and only the typesetter would notice.
+{
+  // Deliberately ugly in every way the formatter is allowed to fix, and ONLY
+  // in program text — leading blank lines, a four-blank-line gap, trailing
+  // spaces, a tab indent, and no final newline. The messy whitespace is
+  // deliberately NOT inside `'< >`: space there is content, the formatter
+  // leaves it exactly as written, and a fixture that put it there would be
+  // asserting the opposite of the design (which is what the first draft of
+  // this block did, and it failed honestly).
+  const MESSY =
+    "\n\n@require: stdja-mini\n" +
+    "\n\n\n\n" +
+    "document (|title = {Playground}; author = {rustyfi};|)   \n" +
+    "\t'<\n" +
+    "  +p { Hello from WebAssembly. }\n" +
+    ">";
+  const formatted = rustyfi.format(MESSY);
+  check("a messy document formats", formatted.ok, formatted.ok ? "" : formatted.error);
+
+  if (formatted.ok) {
+    const shown = JSON.stringify(formatted.text);
+    check(
+      "formatting actually changed something",
+      formatted.text !== MESSY,
+      "the formatter returned its input unchanged, so this fixture no longer " +
+        "exercises anything",
+    );
+    check("leading blank lines are gone", formatted.text.startsWith("@require:"), shown);
+    check("the tab indent was expanded", !formatted.text.includes("\t"), shown);
+    check("trailing whitespace is gone", !/[ \t]+\n/.test(formatted.text), shown);
+    check("a run of blank lines is capped at two", !/\n\n\n\n/.test(formatted.text), shown);
+    check(
+      "the file ends with exactly one newline",
+      formatted.text.endsWith("\n") && !formatted.text.endsWith("\n\n"),
+      shown,
+    );
+
+    // (2) IDEMPOTENCE. A formatter whose output is not a fixed point makes
+    // format-on-save rewrite the file forever, and every diff noisy.
+    const twice = rustyfi.format(formatted.text);
+    check(
+      "formatting is idempotent",
+      twice.ok && twice.text === formatted.text,
+      twice.ok ? "the second pass changed the text again" : twice.error,
+    );
+
+    // (1): the compiler must not be able to tell the difference. Byte
+    // equality, not length — a swapped pair of tokens keeps the length.
+    const before = rustyfi.compile(MESSY);
+    const after = rustyfi.compile(formatted.text);
+    check("the messy document compiled to begin with", before.ok,
+      before.ok ? "" : before.error);
+    check("the formatted document still compiles", after.ok, after.ok ? "" : after.error);
+    if (before.ok && after.ok) {
+      check(
+        "formatting does not change the typeset result",
+        before.pdf.length === after.pdf.length &&
+          before.pdf.every((b, i) => b === after.pdf[i]),
+        `${before.pdf.length} bytes before, ${after.pdf.length} after — a ` +
+          "whitespace-only rewrite cannot change the output, so a token moved",
+      );
+    }
+  }
+
+  // Space inside inline text, math, a string literal and a comment is CONTENT.
+  // A formatter that "tidied" any of it would silently change the document —
+  // and in the first three cases change what it typesets to.
+  const CONTENT =
+    "@require: stdja-mini\n" +
+    "let s = `  two spaces  `\n" +
+    "in\n" +
+    "document (|title = {Playground}; author = {rustyfi};|) '<\n" +
+    "  % a comment   with   gaps\n" +
+    "  +p { spaced   out ${x   +   y} }\n" +
+    ">\n";
+  const kept = rustyfi.format(CONTENT);
+  check("a document made of content-space formats", kept.ok, kept.ok ? "" : kept.error);
+  if (kept.ok) {
+    for (const [what, fragment] of [
+      ["a string literal", "`  two spaces  `"],
+      ["inline text", "spaced   out"],
+      ["math", "${x   +   y}"],
+      ["a comment body", "a comment   with   gaps"],
+    ]) {
+      check(`space inside ${what} is left alone`, kept.text.includes(fragment),
+        JSON.stringify(kept.text));
+    }
+  }
+
+  // (3) A DECLINE. Note what does NOT decline: `let = = = in` lexes perfectly
+  // well and is refused by the PARSER, and the formatter never parses — so a
+  // fixture that merely fails to compile would assert nothing here. What it
+  // takes is text with no token stream at all, i.e. an unterminated literal.
+  const broken = rustyfi.format("@require: stdja-mini\nlet s = `unterminated\n");
+  check("text that does not lex is declined", !broken.ok,
+    broken.ok ? "it formatted!" : "");
+  if (!broken.ok) {
+    check("the decline is readable", broken.error.trim().length > 0,
+      JSON.stringify(broken.error));
+  }
+  const parseError = rustyfi.format("@require: stdja-mini\nlet = = = in");
+  check(
+    "text that lexes but does not parse still formats",
+    parseError.ok,
+    "the formatter is a lexer-level rewrite, so a parse error is none of its " +
+      "business — declining here would make the button useless on exactly the " +
+      "half-written documents it is most wanted on",
+  );
+
+  // The generation is taken explicitly, exactly as `diagnostics` takes it.
+  const v01 =
+    "@require: v01-mini\n\n\n\n\nlet open V01Mini in\n" +
+    "document (| title = `v01` |)   \n'<\n  +p { Hello from 0.1. }\n>";
+  const as01 = rustyfi.format(v01, 1);
+  check("a 0.1 document formats as 0.1", as01.ok, as01.ok ? "" : as01.error);
+  if (as01.ok) {
+    check("its trailing whitespace is gone too", !/[ \t]+\n/.test(as01.text),
+      JSON.stringify(as01.text));
+  }
+
+  // An empty buffer has no line to end. Giving it a newline would be inventing
+  // a line the author has not started.
+  const empty = rustyfi.format("");
+  check("an empty buffer formats to itself", empty.ok && empty.text === "",
+    empty.ok ? JSON.stringify(empty.text) : empty.error);
 }
 
 // A link a browser cannot decode must SAY so rather than load garbage.

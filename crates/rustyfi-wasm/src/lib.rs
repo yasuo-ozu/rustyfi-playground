@@ -1409,6 +1409,67 @@ pub unsafe extern "C" fn rustyfi_index(src: *const u8, len: usize, lang: u32) ->
     .into_raw()
 }
 
+/// Reformat the document, returning the whole new text.
+///
+/// This is `rustyfi_lsp`'s `textDocument/formatting` with no protocol around
+/// it — the same [`rustyfi_lsp::format`] a language-server client reaches, run
+/// against [`rustyfi_lsp::FormatOptions::default`], which is what an editor
+/// that sends no `FormattingOptions` gets: expand tabs at four columns, trim
+/// trailing whitespace, end the file with exactly one newline.
+///
+/// **Whitespace only.** The formatter re-emits the lexer's own token stream
+/// and never reorders, inserts or drops a token, so the reply differs from the
+/// input in inter-token space and nowhere else. In particular nothing inside
+/// inline text `{ }`, block text `'< >`, math `${ }`, a string literal or a
+/// comment body is touched — those are areas where space is CONTENT.
+///
+/// `ok: false` means **declined**, which is not the same as "no changes": a
+/// buffer that does not lex has no token stream to re-emit, and one whose area
+/// map disagrees with its own bytes is one the formatter has misread. Either
+/// way it returns the input unchanged rather than guessing, and says so. An
+/// already-formatted buffer comes back `ok: true` with its own bytes — the
+/// caller compares if it wants to say "no changes".
+///
+/// The generation is taken explicitly rather than sniffed, exactly as
+/// [`rustyfi_diagnostics`] takes it, because 0.1 reserves words 0.0.6 does not
+/// and a buffer that lexes under one may not under the other. A page that
+/// already has a generation selector should pass what the reader chose, so a
+/// decline is about the document rather than about a guess.
+///
+/// # Safety
+/// `src` must point to at least `len` readable bytes for the duration of the
+/// call. A null `src` is only valid with `len == 0`.
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_format(src: *const u8, len: usize, lang: u32) -> *mut Output {
+    let bytes: &[u8] = if src.is_null() || len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src, len) }
+    };
+    let source = match std::str::from_utf8(bytes) {
+        Ok(source) => source,
+        Err(e) => {
+            return Output::from_result(Err(format!("document source is not valid UTF-8: {e}")))
+                .into_raw()
+        }
+    };
+    let opts = rustyfi_lsp::FormatOptions::default();
+    match rustyfi_lsp::format(source, Lang::from_u32(lang).to_version(), &opts) {
+        Some(formatted) => Output {
+            ok: true,
+            bytes: formatted.into_bytes(),
+        },
+        None => Output::from_result(Err(
+            "the formatter declined: this document does not lex under the selected \
+             generation, so there is no token stream to re-emit. Nothing has been \
+             changed. Fix what the problems list reports — or check the generation \
+             selector — and format again."
+                .to_string(),
+        )),
+    }
+    .into_raw()
+}
+
 /// The bundled package names for one generation, newline-separated.
 ///
 /// `lang == 1` is 0.1, anything else 0.0.6.

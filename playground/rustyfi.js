@@ -212,6 +212,43 @@ function wrap(instance) {
       }
     },
 
+    /// Reformat the document. Returns `{ ok: true, text }` with the WHOLE new
+    /// source, or `{ ok: false, error }`.
+    ///
+    /// Whitespace only: the module re-emits the lexer's token stream and never
+    /// reorders, inserts or drops a token, so the reply differs from the input
+    /// in inter-token space and nowhere else. Space inside inline text,
+    /// block text, math, a string literal or a comment body is CONTENT and is
+    /// left exactly as written.
+    ///
+    /// `ok: false` means the formatter DECLINED — a buffer that does not lex
+    /// has no token stream to re-emit — and not "no changes". An
+    /// already-formatted buffer answers `ok: true` with text equal to the
+    /// input, so a caller that wants to say "nothing to do" compares.
+    ///
+    /// `lang` selects the generation, as for `compile`. Unlike the five cursor
+    /// entry points this reports its failures rather than swallowing them: it
+    /// runs on an explicit gesture, so there IS someone to tell.
+    format(source, lang = 0) {
+      const src = new TextEncoder().encode(source);
+      let srcPtr = 0, srcLen = 0;
+      try {
+        [srcPtr, srcLen] = push(src);
+        const { ok, bytes } = take(ex.rustyfi_format(srcPtr, srcLen, lang));
+        if (!ok) return { ok: false, error: text(bytes) };
+        return { ok: true, text: text(bytes) };
+      } catch (e) {
+        trapped = true;
+        return {
+          ok: false,
+          error: `the WebAssembly module trapped while formatting: ${e && e.message ? e.message : e}`,
+          trapped: true,
+        };
+      } finally {
+        if (srcPtr !== 0) ex.rustyfi_dealloc(srcPtr, srcLen);
+      }
+    },
+
     /// Describe what is at a cursor, for a hover tooltip:
     ///
     ///     { line, character, endLine, endCharacter, markdown }

@@ -406,6 +406,8 @@
 
   <button class="primary" id="compile" disabled>Typeset (Ctrl+Enter)</button>
   <button id="share" disabled title="Copy a link that carries this document in its URL">Share</button>
+  <button id="reformat" disabled
+          title="Reformat the source — whitespace only, no token is moved (Shift+Alt+F)">Format</button>
   <span id="status">loading the WebAssembly module…</span>
 </header>
 
@@ -422,7 +424,8 @@
         Hover a name to see what it is and which package declares it ·
         <kbd>Ctrl</kbd>-click or <kbd>F12</kbd> jumps to a definition in this
         document · <kbd>Ctrl</kbd>-<kbd>Space</kbd> completes, as does typing
-        <code>\</code>, <code>+</code>, <code>#</code> or <code>Module.</code>
+        <code>\</code>, <code>+</code>, <code>#</code> or <code>Module.</code> ·
+        <kbd>Shift</kbd>-<kbd>Alt</kbd>-<kbd>F</kbd> reformats the whitespace
       </p>
     </section>
     <section class="pane">
@@ -572,6 +575,7 @@ const placeholderEl = $("placeholder");
 const sourceEl = $("source");
 const compileBtn = $("compile");
 const shareBtn = $("share");
+const formatBtn = $("reformat");
 const langEl = $("lang");
 const diagsEl = $("diags");
 const liveEl = $("live");
@@ -2039,6 +2043,8 @@ view = new EditorView({
       { key: "Mod-Enter", run: (v) => (closeCompletion(v), typeset(), true) },
       { key: "Ctrl-Enter", run: (v) => (closeCompletion(v), typeset(), true) },
       { key: "F12", run: (v) => goToDefinition(v, v.state.selection.main.head) },
+      // What VS Code, and by now most editors, bind "format this document" to.
+      { key: "Shift-Alt-f", run: () => (formatDoc(), true) },
       indentWithTab,
       ...completionKeymap,
       ...historyKeymap,
@@ -2199,7 +2205,89 @@ langEl.addEventListener("change", () => {
   analyseNow();
 });
 
+/// The one change that turns `a` into `b`, as `{ from, to, insert }`, or
+/// `null` when they are equal.
+///
+/// The formatter answers with the WHOLE new document, and replacing the whole
+/// document would be correct but would throw away the caret and put a
+/// full-file diff into the undo history. Trimming the common prefix and suffix
+/// gives CodeMirror an edit it can MAP the selection through, so the caret
+/// stays where the reader left it — which for a whitespace-only reformat is
+/// usually exactly where it was on screen.
+///
+/// Indices count UTF-16 code units, which is what `String.prototype.length`
+/// and CodeMirror's own positions both count. A surrogate pair is never split:
+/// the formatter only ever moves ASCII whitespace, so a boundary cannot land
+/// mid-character in practice, but "in practice" is not a guarantee and a split
+/// pair would corrupt a Japanese document rather than fail.
+function minimalChange(a, b) {
+  if (a === b) return null;
+  const isHigh = (c) => c >= 0xd800 && c <= 0xdbff;
+  const isLow = (c) => c >= 0xdc00 && c <= 0xdfff;
+
+  let from = 0;
+  const shortest = Math.min(a.length, b.length);
+  while (from < shortest && a.charCodeAt(from) === b.charCodeAt(from)) from++;
+  // The prefix stopped between a high surrogate and a low that differs — so
+  // the whole character differs. Step back onto its start.
+  if (from > 0 && isHigh(a.charCodeAt(from - 1))) from--;
+
+  let endA = a.length, endB = b.length;
+  while (endA > from && endB > from && a.charCodeAt(endA - 1) === b.charCodeAt(endB - 1)) {
+    endA--;
+    endB--;
+  }
+  // The suffix began on a low surrogate whose high differs. Same argument,
+  // the other way round: take the character whole.
+  if (endA < a.length && isLow(a.charCodeAt(endA))) {
+    endA++;
+    endB++;
+  }
+  return { from, to: endA, insert: b.slice(from, endB) };
+}
+
+/// Reformat the source in place.
+///
+/// Whitespace only, by construction — the module re-emits the lexer's own
+/// token stream, so nothing inside inline text, block text, math, a string
+/// literal or a comment body moves, and no token is added, dropped or
+/// reordered. That is worth saying in the reply, because "format" in most
+/// editors means something much freer.
+///
+/// A decline is reported and changes NOTHING. It is not "no changes": a buffer
+/// that does not lex has no token stream to re-emit, and the honest answer is
+/// to say so rather than to guess at what the author meant.
+function formatDoc() {
+  if (!rustyfi || rustyfi.trapped || view === null) return;
+  const before = getDoc();
+  const result = rustyfi.format(before, currentLang());
+  if (!result.ok) {
+    showToast("The formatter declined — nothing was changed.", { note: result.error });
+    return;
+  }
+  const change = minimalChange(before, result.text);
+  if (change === null) {
+    showToast("Already formatted.", {
+      note: "This document is character-for-character what the formatter would write.",
+      ok: true,
+    });
+    return;
+  }
+  view.dispatch({ changes: change, scrollIntoView: true });
+  const delta = result.text.length - before.length;
+  const n = Math.abs(delta);
+  showToast("Formatted.", {
+    note:
+      (delta === 0
+        ? "Whitespace moved"
+        : `${n} character${n === 1 ? "" : "s"} of whitespace ${delta < 0 ? "removed" : "added"}`) +
+      " — no token was added, dropped or reordered. Undo puts it back.",
+    ok: true,
+  });
+}
+
 compileBtn.addEventListener("click", typeset);
+formatBtn.addEventListener("click", formatDoc);
 shareBtn.addEventListener("click", share);
 // Ctrl+Enter inside the editor is bound in its own keymap, where it can stop
 // the key from also inserting a newline; this is the same shortcut for
@@ -2208,6 +2296,12 @@ document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !view.hasFocus) {
     e.preventDefault();
     typeset();
+  }
+  // `e.key` is layout-dependent and Alt often shifts it (on a Mac Alt-f is
+  // "\u0192"), so this reads `e.code`, which names the physical key.
+  if (e.shiftKey && e.altKey && e.code === "KeyF" && !view.hasFocus) {
+    e.preventDefault();
+    formatDoc();
   }
 });
 
@@ -2218,6 +2312,7 @@ try {
   statusEl.textContent = `ready — ${rustyfi.packages(currentLang()).length} packages bundled`;
   compileBtn.disabled = false;
   shareBtn.disabled = false;
+  formatBtn.disabled = false;
   // Before the first typeset, so the opening render already has the font.
   await loadBundledFont();
   if (sharedError) {

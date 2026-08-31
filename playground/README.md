@@ -196,6 +196,47 @@ together add (265,862 bytes), because it instantiates `Unparse` over both
 grammars' entire CSTs to get each declaration's exact extent. A jump list does
 not earn a megabyte on every page load.
 
+## Formatting
+
+**Format** in the header, or <kbd>Shift</kbd>-<kbd>Alt</kbd>-<kbd>F</kbd>,
+runs `rustyfi_lsp`'s `textDocument/formatting` — the same code a language
+server client reaches, with the protocol taken off — against the options an
+editor that sends no `FormattingOptions` gets: expand tabs at four columns,
+trim trailing whitespace, end the file with exactly one newline, and cap a run
+of blank lines at two.
+
+**It changes whitespace in program text and nothing else.** The formatter
+re-emits the lexer's own token stream, so no token is added, dropped or
+reordered — and space that is *content* is left exactly as written:
+
+| where | example | touched? |
+|---|---|---|
+| program text | `let  x =   1` | yes |
+| inline text `{ }` | `{ spaced   out }` | no |
+| block text `'< >` | `'<  +p { … } >` | no |
+| math `${ }` | `${x   +   y}` | no |
+| a string literal | `` `  two spaces  ` `` | no |
+| a comment body | `% a comment   with   gaps` | no |
+
+That is a narrower promise than most editors' "format", and it is the honest
+one for a language whose four lexical areas make whitespace significant in
+three of them. The self-test pins it end to end by compiling the document
+before and after and comparing the **PDF bytes**: a rewrite that moved a token
+would still return plausible-looking text, and only the typesetter would
+notice.
+
+Two other things worth knowing:
+
+- **A decline is not "no changes".** Text that does not *lex* has no token
+  stream to re-emit, so the formatter says so and changes nothing rather than
+  guessing. Text that lexes but does not *parse* formats fine — the formatter
+  never parses, which is what makes the button useful on the half-written
+  documents it is most wanted on.
+- **The caret survives.** The module answers with the whole new document; the
+  page trims that to the single edit that differs (`minimalChange`) and
+  dispatches only that, so CodeMirror maps your selection through it and one
+  undo puts everything back.
+
 ## The output tabs, from the keyboard
 
 The four tabs are a real ARIA tablist rather than four buttons wearing the
