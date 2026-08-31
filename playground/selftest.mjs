@@ -1698,6 +1698,19 @@ let x = cfg#ti
   // check above exists to catch a stale one, and the page also has a
   // module-level `format` variable — three ways for one name to mean the wrong
   // thing, which is how this button was first written and immediately caught.
+  // The glue must not call an ABI entry point it has not checked for. The page
+  // and the module are separately cached files, so a fresh page can meet a
+  // stale module — and calling `undefined` would throw into the catch and latch
+  // `trapped`, which is permanent and which every cursor feature reads.
+  {
+    const glue = await read("rustyfi.js");
+    const guard = glue.indexOf('typeof ex.rustyfi_format !== "function"');
+    const call = glue.indexOf("ex.rustyfi_format(srcPtr");
+    check("the glue checks for rustyfi_format before calling it",
+      guard > 0 && call > guard,
+      "a stale module would trap the instance instead of saying what is wrong");
+  }
+
   check("the page has a Format button", /id="reformat"/.test(page),
     "nothing in the page reaches rustyfi_format, so the ABI export is dead code");
   check("Format is bound to Shift-Alt-F", /"Shift-Alt-f"/.test(page),
@@ -2238,6 +2251,14 @@ let x = cfg#ti
     check("the decline is readable", broken.error.trim().length > 0,
       JSON.stringify(broken.error));
   }
+  // A decline must not poison the SESSION. `trapped` is permanent and `ask`
+  // reads it, so anything that latched it here would silently take hover,
+  // completion, go-to-definition, the outline and the dependency index down
+  // for the rest of the page's life — with no error anywhere.
+  check("a decline does not latch `trapped`", rustyfi.trapped === false,
+    "the module is marked trapped after an ordinary decline; every cursor " +
+      "feature is now silently dead");
+
   const parseError = rustyfi.format("@require: stdja-mini\nlet = = = in");
   check(
     "text that lexes but does not parse still formats",

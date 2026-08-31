@@ -230,6 +230,24 @@ function wrap(instance) {
     /// entry points this reports its failures rather than swallowing them: it
     /// runs on an explicit gesture, so there IS someone to tell.
     format(source, lang = 0) {
+      // A MISSING EXPORT IS NOT A TRAP, and the difference is not cosmetic.
+      // The page and the module are two separately cached files (see
+      // `instantiateFromUrl` on the `?v=` stamp, and on the `compileMarkdown is
+      // not a function` split that produced it), so a fresh page CAN meet a
+      // stale module. Calling `undefined` would throw, land in the catch below
+      // and latch `trapped` — which is permanent, and which `ask` reads, so one
+      // press of a button the old module cannot serve would silently take hover,
+      // completion, go-to-definition, the outline and the dependency index down
+      // with it for the rest of the session. Say what is actually wrong instead.
+      if (typeof ex.rustyfi_format !== "function") {
+        return {
+          ok: false,
+          error:
+            "this WebAssembly module has no formatter — the page and the module " +
+            "have come from different builds. Reload the page (a hard reload if " +
+            "your browser has one) to get a matching pair.",
+        };
+      }
       const src = new TextEncoder().encode(source);
       let srcPtr = 0, srcLen = 0;
       try {
