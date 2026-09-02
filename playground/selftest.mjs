@@ -1711,13 +1711,92 @@ let x = cfg#ti
       "a stale module would trap the instance instead of saying what is wrong");
   }
 
-  check("the page has a Format button", /id="reformat"/.test(page),
-    "nothing in the page reaches rustyfi_format, so the ABI export is dead code");
-  check("Format is bound to Shift-Alt-F", /"Shift-Alt-f"/.test(page),
-    "the keymap entry is gone, so only the button works");
-  check("the Format button is disabled until the module loads",
-    /id="reformat"[^>]*\bdisabled\b/.test(page),
-    "pressing it before the module arrives would throw");
+  // THE FORMAT BUTTON IS GONE, deliberately. Formatting is automatic — on a
+  // click in the editor, and whenever the caret leaves a line — so a button
+  // asking for what already happened was a control with nothing to do.
+  check("no stale Format button is left behind",
+    !/id="reformat"/.test(page) && !/formatBtn/.test(page),
+    "the button was removed from one place and not the other");
+  // The explicit keybind is GONE on purpose: the source reformats itself
+  // whenever a newline lands, so a chord to ask for it was redundant. What
+  // replaces it as the thing worth pinning is the trigger, and the trigger is
+  // read off the TRANSACTION rather than off a keystroke — Enter is not the
+  // only way to start a line (paste, autocomplete and Shift-Enter all do), and
+  // a key handler would miss every one of those while also firing on an Enter
+  // the completion popup swallowed.
+  check("no stale Shift-Alt-F keybind is left behind",
+    !/Shift-Alt-f/.test(page) && !/e\.code === "KeyF"/.test(page),
+    "the keybind was removed from one place and not the other");
+  // The trigger is the caret's LINE changing, not a key and not an inserted
+  // newline. You are done with a line when you go somewhere else, however you
+  // got there — and watching for an inserted newline fired while you were still
+  // typing on the line above the one you had just made.
+  // An EDIT is not a departure: Enter moves the caret to a new line, but you are
+  // still typing and reformatting mid-thought moves text under the cursor. Only
+  // a pure navigation formats.
+  check("typing, including Enter, does not reformat",
+    /const navigation = !update\.docChanged/.test(page) && /if \(navigation\) formatDoc\(true\)/.test(page),
+    "an edit that changes the caret's line would reformat mid-thought");
+  check("the source reformats itself when the caret leaves a line",
+    /let caretLine = 0/.test(page) && /line !== caretLine/.test(page) && /formatDoc\(true\)/.test(page),
+    "the caret-line trigger is gone, so nothing formats automatically");
+  check("no stale on-newline trigger is left beside it",
+    !/inserted\.lines > 1/.test(page),
+    "two triggers would format twice for one Enter");
+  // The wrap width follows the editor, so the number in the panel is the number
+  // in force rather than a stale one the formatter is ignoring.
+  check("the wrap width can be measured from the editor",
+    /function editorColumns\(\)/.test(page) && /defaultCharacterWidth/.test(page),
+    "auto width is gone");
+  check("auto width follows a resize, debounced",
+    /ResizeObserver/.test(page) && /cols === lastCols/.test(page),
+    "a resize would not re-wrap, or would re-parse on every drag frame");
+  check("the automatic path is the QUIET one",
+    /function formatDoc\(quiet = false\)/.test(page),
+    "an automatic format that toasts would fire several times a sentence");
+  // Pressing Enter used to leave the caret at COLUMN 0: the editor's SATySFi
+  // mode has no indent service, so CodeMirror inserts a bare newline and
+  // nothing else. `indentCaretLine` asks the FORMATTER what the new line's
+  // indentation should be — by formatting a copy with a sentinel on that line —
+  // so the auto-indent and the next format can never disagree.
+  check("Enter indents the new line, using the formatter as the source of truth",
+    /function indentCaretLine\(\)/.test(page) && /rustyfiIndentProbe/.test(page),
+    "Enter leaves the caret at column 0");
+  check("the indent probe only ever touches a blank line",
+    /line\.text\.trim\(\) !== "" \|\| sel\.head !== line\.to/.test(page),
+    "it would rewrite the indentation of a line being typed into");
+  check("a click reformats, but a drag-select does not",
+    /click\(event, v\)/.test(page) && /!v\.state\.selection\.main\.empty/.test(page),
+    "reflowing under a live selection is the one moment it is most unwelcome");
+  check("the automatic format cannot retrigger itself",
+    /let formatting = false/.test(page) && /if \(formatting\) return/.test(page),
+    "the formatter's own dispatch would re-enter the listener");
+  check("the settings panel exists and is folded away",
+    /id="fmtcfg"/.test(page) && /<summary/.test(page),
+    "the formatter settings are unreachable");
+  // A control is wired in THREE places — the markup, the config text, and the
+  // listener list — and a control missing from the third is the quiet failure:
+  // it looks right and does nothing until something else forces a reformat.
+  for (const [what, id, js] of [
+    ["comment reflow", "cfg-wrap", "cfgWrap"],
+    ["inline re-wrap", "cfg-inline", "cfgInline"],
+  ]) {
+    check(`the ${what} control exists`, new RegExp(`id="${id}"`).test(page),
+      "the checkbox is not in the markup");
+    // `formatConfig()` interpolates the control straight into the TOML line, so
+    // this is a plain substring rather than a pattern: `${cfgWrap.checked}`.
+    check(`the ${what} control reaches the module`,
+      page.includes("${" + js + ".checked}"),
+      "the setting is never put into the config text");
+    check(`a change to ${what} reformats`,
+      new RegExp(`\\b${js}\\b`).test(page.slice(page.indexOf("for (const el of ["))),
+      "the control is not in the listener list, so changing it does nothing");
+  }
+  // Both default ON, matching `CstOptions`'s own defaults. A page that shipped
+  // them off would quietly format differently from `rustyfi fmt`.
+  check("both wrap settings default ON, as the library does",
+    /id="cfg-wrap" checked/.test(page) && /id="cfg-inline" checked/.test(page),
+    "the page and the library disagree about a default");
 
   // `minimalChange` is the one piece of index arithmetic on this path, and the
   // failure it protects against is silent: the formatter answers with the
@@ -2231,13 +2310,97 @@ let x = cfg#ti
   if (kept.ok) {
     for (const [what, fragment] of [
       ["a string literal", "`  two spaces  `"],
-      ["inline text", "spaced   out"],
-      ["math", "${x   +   y}"],
       ["a comment body", "a comment   with   gaps"],
     ]) {
       check(`space inside ${what} is left alone`, kept.text.includes(fragment),
         JSON.stringify(kept.text));
     }
+    // INLINE TEXT IS NO LONGER IN THAT LIST, and the change is deliberate.
+    //
+    // This check used to assert `spaced   out` survived, because inline text
+    // was emitted as one verbatim slice. The formatter now re-wraps inline text
+    // gap by gap, and collapsing a whitespace RUN is part of that: the lexer
+    // turns a whole run into ONE token whose identity is fixed by its first
+    // character, so the run's length is invisible to the typesetter.
+    //
+    // Verified before this assertion was changed, rather than assumed — the
+    // three fixtures compile to:
+    //
+    //   `+p { spaced   out }`  vs  `+p { spaced out }`   IDENTICAL PDFs
+    //   `+p { spaced out }`    vs  `+p { spacedout }`    DIFFERENT PDFs
+    //
+    // The second line is the vacuity control: deleting the space entirely DOES
+    // change the rendering, so the first line is a real result and not a
+    // fixture that never reached the typesetter.
+    //
+    // What replaces the old claim is the narrower one that is still true: the
+    // run is collapsed, never DELETED, and never turned into a line break.
+    // MATH IS NO LONGER IN THAT LIST EITHER, for the same reason inline text is
+    // not, and with the same evidence taken before the assertion was changed.
+    //
+    // `lex_math` bumps past a space or a break and emits NO TOKEN at all
+    // (`lexer.rs:1338-1340`), so whitespace inside `${ }` is invisible to the
+    // typesetter — strictly more invisible than inline text's, whose run at
+    // least produces one token. Compiled to check rather than argued:
+    //
+    //   `${x   +   y}`  vs  `${x + y}`   IDENTICAL PDFs
+    //   `${x + y}`      vs  `${x+y}`     IDENTICAL PDFs   (space is invisible entirely)
+    //   `${x + y}`      vs  `${x - y}`   DIFFERENT        (the vacuity control)
+    //
+    // The corpus agrees the tight form is the house style — the math residue is
+    // only 58.5% one-space — so the formatter COLLAPSES a run rather than
+    // inserting a space where none was written. `${abc}` stays `${abc}`.
+    check("a math whitespace run is collapsed, and its content survives",
+      /\$\{x \+ y\}/.test(kept.text) && !/\$\{x\+y\}/.test(kept.text),
+      JSON.stringify(kept.text));
+    check("an inline whitespace run is collapsed, not deleted",
+      /spaced out/.test(kept.text) && !/spacedout/.test(kept.text),
+      JSON.stringify(kept.text));
+  }
+
+  // A RUN collapsing and a LINE BREAK surviving are two different claims, and
+  // math is where they part company. The formatter is atomic for math
+  // line-breaking in BOTH directions: it never breaks an equation the author
+  // wrote on one line, and never joins one they wrote across several. Joining
+  // is the edit that cannot be undone — the newlines are gone and nothing can
+  // put them back — so it is worth its own check rather than riding on the
+  // run-collapse one above.
+  const MATHLINES =
+    "@require: stdja-mini\n" +
+    "let m = ${\n" +
+    "  \\frac{1}{2}\n" +
+    "  + x\n" +
+    "}\n" +
+    "in\n" +
+    "document (|title = {P}; author = {r};|) '<\n" +
+    "  +p { #m; }\n" +
+    ">\n";
+  const mlines = rustyfi.format(MATHLINES);
+  check("a multi-line equation formats", mlines.ok, mlines.ok ? "" : mlines.error);
+  if (mlines.ok) {
+    check("an equation written across lines keeps its lines",
+      /\$\{\n\s*\\frac\{1\}\{2\}\n\s*\+ x\n\s*\}/.test(mlines.text),
+      JSON.stringify(mlines.text));
+    check("and formatting it again changes nothing",
+      rustyfi.format(mlines.text).text === mlines.text,
+      JSON.stringify(mlines.text));
+  }
+  // The other direction, at a budget narrow enough that everything else breaks:
+  // a one-line equation is never split, however far past the width it runs.
+  const wideMath =
+    "@require: stdja-mini\n" +
+    "let m = ${\\frac{n \\paren{n + 1}}{6} + \\alpha \\beta \\gamma \\delta}\n" +
+    "in\n" +
+    "document (|title = {P}; author = {r};|) '<\n" +
+    "  +p { #m; }\n" +
+    ">\n";
+  const tight = rustyfi.format(wideMath, 0, "max_width = 30");
+  check("a one-line equation survives a narrow budget", tight.ok, tight.ok ? "" : tight.error);
+  if (tight.ok) {
+    check("and is not split at any brace",
+      /\$\{\\frac\{n \\paren\{n \+ 1\}\}\{6\} \+ \\alpha \\beta \\gamma \\delta\}/
+        .test(tight.text),
+      JSON.stringify(tight.text));
   }
 
   // (3) A DECLINE. Note what does NOT decline: `let = = = in` lexes perfectly
@@ -2278,6 +2441,54 @@ let x = cfg#ti
     check("its trailing whitespace is gone too", !/[ \t]+\n/.test(as01.text),
       JSON.stringify(as01.text));
   }
+
+  // THE SETTINGS ABI, which nothing here covered until now — the page's whole
+  // Format settings panel goes through it, and a silent regression in it looks
+  // exactly like a panel whose controls do nothing.
+  //
+  // A wide document, so `max_width` has something to decide.
+  const wide =
+    "let result = someFunction argumentOne argumentTwo argumentThree " +
+    "argumentFour argumentFive argumentSix in\nresult\n";
+  const at100 = rustyfi.format(wide, 0, "max_width = 100");
+  const at40 = rustyfi.format(wide, 0, "max_width = 40");
+  check("a width setting is accepted", at100.ok && at40.ok,
+    at100.ok ? (at40.ok ? "" : at40.error) : at100.error);
+  if (at100.ok && at40.ok) {
+    // The narrow one has to break MORE. Comparing line counts rather than exact
+    // text keeps this from re-asserting the formatter's layout, which is the
+    // typesetter's own test suite's job.
+    check("a narrower width breaks more lines",
+      at40.text.split("\n").length > at100.text.split("\n").length,
+      JSON.stringify([at100.text, at40.text]));
+    check("every setting is a fixpoint",
+      rustyfi.format(at40.text, 0, "max_width = 40").text === at40.text,
+      JSON.stringify(at40.text));
+  }
+  // Every key the panel can emit is accepted. A key the module rejects would
+  // make the whole panel error out, because `formatConfig()` sends all of them
+  // together on every change.
+  const everyKey = rustyfi.format(wide, 0,
+    "max_width = 80\ntab_spaces = 4\nmax_blank_lines = 1\n" +
+    "wrap_comments = true\nwrap_inline_text = false");
+  check("every key the settings panel emits is accepted", everyKey.ok,
+    everyKey.ok ? "" : everyKey.error);
+  check("an indent setting reaches the output",
+    everyKey.ok && /\n {4}/.test(everyKey.text),
+    everyKey.ok ? JSON.stringify(everyKey.text) : everyKey.error);
+  // The unknown-key path, and the PREFIX the page keys on: `index.html` tells a
+  // rejected SETTING from a declined DOCUMENT by `error.startsWith("settings:")`
+  // and shows the first in the panel while staying quiet about the second.
+  // Without that prefix a typo would be silently swallowed.
+  const typo = rustyfi.format(wide, 0, "max_wdith = 40");
+  check("a misspelled setting is refused rather than ignored", !typo.ok,
+    typo.ok ? JSON.stringify(typo.text) : "");
+  check("and the refusal carries the prefix the panel keys on",
+    !typo.ok && typo.error.startsWith("settings:"),
+    typo.ok ? "" : JSON.stringify(typo.error));
+  check("the refusal names the offending key and the known ones",
+    !typo.ok && typo.error.includes("max_wdith") && typo.error.includes("wrap_inline_text"),
+    typo.ok ? "" : JSON.stringify(typo.error));
 
   // An empty buffer has no line to end. Giving it a newline would be inventing
   // a line the author has not started.

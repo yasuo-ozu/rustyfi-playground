@@ -229,7 +229,18 @@ function wrap(instance) {
     /// `lang` selects the generation, as for `compile`. Unlike the five cursor
     /// entry points this reports its failures rather than swallowing them: it
     /// runs on an explicit gesture, so there IS someone to tell.
-    format(source, lang = 0) {
+    /// Reformat, with settings.
+    ///
+    /// `config` is the text a `rustyfi-fmt.toml` would hold — `max_width = 100`,
+    /// `tab_spaces = 2`, `max_blank_lines = 2`, `wrap_comments = false` — or an
+    /// empty string for the built-in defaults.
+    ///
+    /// Settings travel as TEXT rather than as arguments on purpose: adding a
+    /// formatter option later changes neither the module's ABI nor this file.
+    /// An unknown key is an ERROR, not a warning — a typo that silently does
+    /// nothing is worse than one that says so, because you would believe you
+    /// had configured the formatter.
+    format(source, lang = 0, config = "") {
       // A MISSING EXPORT IS NOT A TRAP, and the difference is not cosmetic.
       // The page and the module are two separately cached files (see
       // `instantiateFromUrl` on the `?v=` stamp, and on the `compileMarkdown is
@@ -239,7 +250,8 @@ function wrap(instance) {
       // press of a button the old module cannot serve would silently take hover,
       // completion, go-to-definition, the outline and the dependency index down
       // with it for the rest of the session. Say what is actually wrong instead.
-      if (typeof ex.rustyfi_format !== "function") {
+      const withConfig = typeof ex.rustyfi_format_with_config === "function";
+      if (!withConfig && typeof ex.rustyfi_format !== "function") {
         return {
           ok: false,
           error:
@@ -249,10 +261,15 @@ function wrap(instance) {
         };
       }
       const src = new TextEncoder().encode(source);
-      let srcPtr = 0, srcLen = 0;
+      const cfg = new TextEncoder().encode(config || "");
+      let srcPtr = 0, srcLen = 0, cfgPtr = 0, cfgLen = 0;
       try {
         [srcPtr, srcLen] = push(src);
-        const { ok, bytes } = take(ex.rustyfi_format(srcPtr, srcLen, lang));
+        [cfgPtr, cfgLen] = push(cfg);
+        const out = withConfig
+          ? ex.rustyfi_format_with_config(srcPtr, srcLen, lang, cfgPtr, cfgLen)
+          : ex.rustyfi_format(srcPtr, srcLen, lang);
+        const { ok, bytes } = take(out);
         if (!ok) return { ok: false, error: text(bytes) };
         return { ok: true, text: text(bytes) };
       } catch (e) {
@@ -264,6 +281,7 @@ function wrap(instance) {
         };
       } finally {
         if (srcPtr !== 0) ex.rustyfi_dealloc(srcPtr, srcLen);
+        if (cfgPtr !== 0) ex.rustyfi_dealloc(cfgPtr, cfgLen);
       }
     },
 

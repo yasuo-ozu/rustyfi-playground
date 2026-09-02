@@ -145,6 +145,40 @@
     margin: 0 0 0.4rem; font-size: 0.76rem; text-transform: uppercase;
     letter-spacing: 0.07em; color: var(--muted); font-weight: 600;
   }
+  /* The formatter settings, folded away next to the button that uses them.
+     A `<details>` rather than a dialog: it is a handful of controls, it is
+     consulted rarely, and it must not take a click to dismiss. */
+  #fmtcfg { position: relative; }
+  #fmtcfg > summary {
+    cursor: pointer; font-size: 0.85rem; color: var(--muted);
+    padding: 0.25rem 0.5rem; border: 1px solid var(--line); border-radius: 7px;
+    list-style: none; user-select: none;
+  }
+  #fmtcfg > summary::-webkit-details-marker { display: none; }
+  #fmtcfg > summary:hover { color: var(--ink); border-color: var(--muted); }
+  #fmtcfg[open] > summary { color: var(--ink); border-color: var(--muted); }
+  .fmtgrid {
+    position: absolute; z-index: 40; top: calc(100% + 0.4rem); left: 0;
+    min-width: 21rem; display: flex; flex-direction: column; gap: 0.7rem;
+    padding: 0.9rem 1rem; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 9px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  }
+  .fmtgrid label {
+    display: grid; grid-template-columns: 9rem 5rem; gap: 0.2rem 0.6rem;
+    align-items: center; font-size: 0.85rem; color: var(--ink);
+  }
+  .fmtgrid label.check { grid-template-columns: 1.1rem 1fr; }
+  .fmtgrid input[type="number"] {
+    font: inherit; font-family: var(--mono); font-size: 0.85rem;
+    padding: 0.15rem 0.3rem; text-align: right;
+    background: var(--bg); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 5px;
+  }
+  .fmtgrid .fine { grid-column: 1 / -1; margin: 0; }
+  .fmtgrid #cfg-note:empty { display: none; }
+  .fmtgrid #cfg-note { color: var(--error-ink); }
+
   /* THE EDITOR.
      CodeMirror 6, vendored under `vendor/` and served from this origin — see
      the import at the top of the script for why it is committed rather than
@@ -406,8 +440,45 @@
 
   <button class="primary" id="compile" disabled>Typeset (Ctrl+Enter)</button>
   <button id="share" disabled title="Copy a link that carries this document in its URL">Share</button>
-  <button id="reformat" disabled
-          title="Reformat the source — whitespace only, no token is moved (Shift+Alt+F)">Format</button>
+  <details id="fmtcfg">
+    <summary title="Formatter settings">Format settings</summary>
+    <div class="fmtgrid">
+      <label class="check">
+        <input type="checkbox" id="cfg-autowidth" checked>
+        Fit the editor
+        <span class="fine">take the wrap width from how many columns the editor
+          actually shows, and follow it when the pane is resized</span>
+      </label>
+      <label>Max width
+        <input type="number" id="cfg-width" min="20" max="1000" step="1" value="100">
+        <span class="fine">display columns, so a CJK character counts two</span>
+      </label>
+      <label>Indent
+        <input type="number" id="cfg-tab" min="1" max="16" step="1" value="2">
+        <span class="fine">columns per step — 83% of the bundled corpus uses 2</span>
+      </label>
+      <label>Blank lines kept
+        <input type="number" id="cfg-blank" min="0" max="32" step="1" value="2">
+        <span class="fine">a longer run is capped to this</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="cfg-wrap" checked>
+        Reflow long comments
+        <span class="fine">on, matching the library default: it reflows 3
+          comments in the 2062 this rule can reach at all, and the risk it
+          carries is rewriting commented-out code</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="cfg-inline" checked>
+        Re-wrap text inside <code>{ }</code>
+        <span class="fine">on, matching the library default: fills a paragraph
+          to the width above, gap by gap. Turn it off for manuals laid out one
+          sentence per line — the gaps it moves are invisible to the
+          typesetter either way</span>
+      </label>
+      <p class="fine" id="cfg-note"></p>
+    </div>
+  </details>
   <span id="status">loading the WebAssembly module…</span>
 </header>
 
@@ -424,8 +495,8 @@
         Hover a name to see what it is and which package declares it ·
         <kbd>Ctrl</kbd>-click or <kbd>F12</kbd> jumps to a definition in this
         document · <kbd>Ctrl</kbd>-<kbd>Space</kbd> completes, as does typing
-        <code>\</code>, <code>+</code>, <code>#</code> or <code>Module.</code> ·
-        <kbd>Shift</kbd>-<kbd>Alt</kbd>-<kbd>F</kbd> reformats the whitespace
+        <code>\</code>, <code>+</code>, <code>#</code> or <code>Module.</code>·
+        the source reformats itself when you start a new line
       </p>
     </section>
     <section class="pane">
@@ -575,7 +646,125 @@ const placeholderEl = $("placeholder");
 const sourceEl = $("source");
 const compileBtn = $("compile");
 const shareBtn = $("share");
-const formatBtn = $("reformat");
+const cfgWidth = $("cfg-width");
+const cfgAutoWidth = $("cfg-autowidth");
+const cfgTab = $("cfg-tab");
+const cfgBlank = $("cfg-blank");
+const cfgWrap = $("cfg-wrap");
+const cfgInline = $("cfg-inline");
+const cfgNote = $("cfg-note");
+
+/// How many columns the editor actually shows.
+///
+/// `null` when it cannot be measured — before the editor exists, or if the pane
+/// is collapsed to nothing — and every caller then falls back to the typed
+/// width rather than guessing.
+///
+/// CodeMirror measures the font for us (`defaultCharacterWidth`), which is the
+/// right source: reading a CSS `ch` would assume the face is monospaced and
+/// that the browser resolved the family we asked for, and a silent font
+/// fallback would then put the wrap column somewhere else than the text.
+///
+/// The gutter is excluded by measuring `.cm-content` rather than the editor,
+/// and its horizontal padding is subtracted — otherwise the last column or two
+/// wrap off the visible area, which is exactly the thing this is for.
+function editorColumns() {
+  if (view === null) return null;
+  const content = view.contentDOM;
+  if (!content) return null;
+  const style = window.getComputedStyle(content);
+  const pad =
+    Number.parseFloat(style.paddingLeft || "0") +
+    Number.parseFloat(style.paddingRight || "0");
+  const usable = content.clientWidth - pad;
+  const per = view.defaultCharacterWidth;
+  if (!(usable > 0) || !(per > 0)) return null;
+  // Two columns short of what fits, deliberately.
+  //
+  // `floor(usable / per)` is the last column that renders, which is the wrong
+  // target for a wrap budget: a line filled to exactly that column sits against
+  // the right edge with nothing after it, and any of the several things that
+  // consume a column without being measured here — a vertical scrollbar
+  // appearing as the document grows, the caret at end of line, a fractional
+  // advance rounding up on a proportional fallback face — then pushes it into a
+  // horizontal scroll. Leaving two columns means the wrapped text is visibly
+  // inside the pane rather than flush against it.
+  return Math.max(20, Math.floor(usable / per) - 2);
+}
+
+/// Put the measured width in the number field, so the field always shows the
+/// value actually in force rather than a stale one the formatter is ignoring.
+function syncAutoWidth() {
+  if (!cfgAutoWidth.checked) {
+    cfgWidth.disabled = false;
+    return;
+  }
+  cfgWidth.disabled = true;
+  const cols = editorColumns();
+  if (cols !== null) cfgWidth.value = String(cols);
+}
+
+/// The formatter settings, as the text a `rustyfi-fmt.toml` would hold.
+///
+/// Built rather than stored: the controls ARE the state, so there is no
+/// second copy to drift. The module parses this and rejects an unknown key, so
+/// the shape here is the shape a project config file has — the same settings
+/// pasted into `rustyfi-fmt.toml` will mean the same thing.
+function formatConfig() {
+  const n = (el, fallback) => {
+    const v = Number.parseInt(el.value, 10);
+    return Number.isFinite(v) ? v : fallback;
+  };
+  const width = cfgAutoWidth.checked ? (editorColumns() ?? n(cfgWidth, 100)) : n(cfgWidth, 100);
+  return [
+    `max_width = ${width}`,
+    `tab_spaces = ${n(cfgTab, 2)}`,
+    `max_blank_lines = ${n(cfgBlank, 2)}`,
+    `wrap_comments = ${cfgWrap.checked}`,
+    `wrap_inline_text = ${cfgInline.checked}`,
+  ].join("\n");
+}
+
+/// Remember the settings for the next visit, and restore them now.
+///
+/// `localStorage` is per-origin and per-browser, so this is a convenience for
+/// one reader on one machine and nothing more — it is wrapped because a private
+/// window, cleared site data or a browser set to block storage all make the
+/// accessor throw rather than return nothing.
+const CFG_KEY = "rustyfi.fmt.settings";
+function restoreFormatConfig() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(CFG_KEY) || "null");
+  } catch {
+    saved = null;
+  }
+  if (!saved) return;
+  if (typeof saved.auto_width === "boolean") cfgAutoWidth.checked = saved.auto_width;
+  if (Number.isFinite(saved.max_width)) cfgWidth.value = saved.max_width;
+  if (Number.isFinite(saved.tab_spaces)) cfgTab.value = saved.tab_spaces;
+  if (Number.isFinite(saved.max_blank_lines)) cfgBlank.value = saved.max_blank_lines;
+  // `typeof === "boolean"`, not `Boolean(...)`: a settings blob saved before
+  // one of these existed has the key MISSING, and coercing that to `false`
+  // turns a default-ON setting off for everybody who had ever touched the
+  // panel. The two numeric restores above already guard the same way.
+  if (typeof saved.wrap_comments === "boolean") cfgWrap.checked = saved.wrap_comments;
+  if (typeof saved.wrap_inline_text === "boolean") cfgInline.checked = saved.wrap_inline_text;
+}
+function saveFormatConfig() {
+  try {
+    localStorage.setItem(CFG_KEY, JSON.stringify({
+      auto_width: cfgAutoWidth.checked,
+      max_width: Number.parseInt(cfgWidth.value, 10),
+      tab_spaces: Number.parseInt(cfgTab.value, 10),
+      max_blank_lines: Number.parseInt(cfgBlank.value, 10),
+      wrap_comments: cfgWrap.checked,
+      wrap_inline_text: cfgInline.checked,
+    }));
+  } catch {
+    // A browser that refuses storage still formats; it just forgets.
+  }
+}
 const langEl = $("lang");
 const diagsEl = $("diags");
 const liveEl = $("live");
@@ -623,6 +812,13 @@ let blobUrl = null;
 /// loads — without ordering the whole file around the editor.
 let view = null;
 let pendingDoc = "";
+/// True while the automatic formatter is dispatching, so its own edit does not
+/// retrigger it.
+let formatting = false;
+/// The line the caret was on at the last update, so a move BETWEEN lines can be
+/// told from a move within one. `0` is never a real line number, so the first
+/// update always looks like a change and the document is formatted once on load.
+let caretLine = 0;
 
 const getDoc = () => (view === null ? pendingDoc : view.state.doc.toString());
 
@@ -2029,6 +2225,58 @@ view = new EditorView({
     hoverSource,
     lintGutter(),
     lintConfig.of(linter(analyse, { delay: ANALYSE_DELAY_MS })),
+    // FORMAT WHEN THE CARET LEAVES A LINE.
+    //
+    // The trigger is the caret's LINE NUMBER changing, not a key and not a
+    // newline landing. That is a better model of when a line is finished: you
+    // are done with a line when you go somewhere else, however you got there —
+    // Enter, an arrow key, a click, a paste that moves the caret. Watching for
+    // Enter would miss all but the first, and watching for an inserted newline
+    // (which is what this used to do) fires while you are still typing on the
+    // line ABOVE the one you just made.
+    //
+    // It also means navigating away from a line you never edited reformats it,
+    // which is the point: the document converges as you move through it.
+    //
+    // Runs on a microtask AFTER the transaction commits, because formatting
+    // inside `update` would dispatch a transaction from within one, which
+    // CodeMirror forbids. `formatting` guards the re-entry the formatter's own
+    // dispatch would otherwise cause, and `caretLine` is the state this needs
+    // beyond what the update carries.
+    //
+    // A decline is silent and is the COMMON case: a buffer being typed into
+    // usually does not lex, and there is nothing useful to say about that.
+    EditorView.updateListener.of((update) => {
+      if (formatting) return;
+      const line = update.state.doc.lineAt(update.state.selection.main.head).number;
+      const moved = line !== caretLine;
+      caretLine = line;
+      if (!moved) return;
+      // AN EDIT IS NOT A DEPARTURE. Enter moves the caret to a new line, but
+      // you have not left the old one in any sense that matters — you are still
+      // typing, and reformatting mid-thought moves text under the cursor. So a
+      // line change that came WITH a document change does not format; only a
+      // pure navigation does.
+      //
+      // The caret line is still recorded above, so the next arrow key or click
+      // is measured against where Enter actually left you.
+      const navigation = !update.docChanged;
+      queueMicrotask(() => {
+        formatting = true;
+        try {
+          if (navigation) formatDoc(true);
+          // The new line's indentation is offered either way. It is a caret
+          // convenience rather than a reformat — it touches only a line that is
+          // blank with the caret at its end — and without it Enter drops you at
+          // column 0, which is what it did before any of this existed.
+          caretLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+          indentCaretLine();
+          caretLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+        } finally {
+          formatting = false;
+        }
+      });
+    }),
     keymap.of([
       // Typeset. Bound for BOTH `Mod-Enter` and `Ctrl-Enter`, which are the
       // same chord only off a Mac: there `Mod` is Cmd, so a plain `Mod-Enter`
@@ -2043,8 +2291,6 @@ view = new EditorView({
       { key: "Mod-Enter", run: (v) => (closeCompletion(v), typeset(), true) },
       { key: "Ctrl-Enter", run: (v) => (closeCompletion(v), typeset(), true) },
       { key: "F12", run: (v) => goToDefinition(v, v.state.selection.main.head) },
-      // What VS Code, and by now most editors, bind "format this document" to.
-      { key: "Shift-Alt-f", run: () => (formatDoc(), true) },
       indentWithTab,
       ...completionKeymap,
       ...historyKeymap,
@@ -2057,6 +2303,37 @@ view = new EditorView({
         if (pos === null) return false;
         event.preventDefault();
         return goToDefinition(v, pos);
+      },
+      // Reformat when the editor is clicked.
+      //
+      // `click` rather than `mousedown`, so the caret has already landed and
+      // the edit is mapped through a selection the reader can see.
+      //
+      // Two guards, and both are about not fighting the reader:
+      //
+      //   * a click that ENDS A DRAG has a non-empty selection, which means the
+      //     reader is selecting text — reflowing under a live selection is the
+      //     one moment it would be most unwelcome, and CodeMirror would map the
+      //     range through the edit into something they did not select;
+      //   * a Ctrl/Cmd click is a go-to-definition, handled above, and it moves
+      //     the caret somewhere deliberate.
+      //
+      // Quiet, for the same reason the on-newline path is: a click is not a
+      // request for a report, and a decline is the ordinary state of a buffer
+      // being written.
+      click(event, v) {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey) return false;
+        if (!v.state.selection.main.empty) return false;
+        if (formatting) return false;
+        queueMicrotask(() => {
+          formatting = true;
+          try {
+            formatDoc(true);
+          } finally {
+            formatting = false;
+          }
+        });
+        return false;
       },
     }),
     EditorView.updateListener.of((update) => {
@@ -2246,34 +2523,93 @@ function minimalChange(a, b) {
   return { from, to: endA, insert: b.slice(from, endB) };
 }
 
+/// Give the caret's line the indentation the formatter would give it, and put
+/// the caret after it.
+///
+/// This exists because pressing Enter used to leave you at COLUMN 0. The
+/// editor's SATySFi mode has no indent service, so CodeMirror inserts a bare
+/// newline and nothing else — measured, not assumed: sampling the document
+/// 100 ms after Enter, before the formatter runs at all, already shows an empty
+/// line. The formatter was not eating an indent; there never was one.
+///
+/// The indentation is asked of the FORMATTER rather than copied from the line
+/// above, because those differ exactly where it matters — after `then`, after
+/// `=`, or on the line following a closing delimiter, the previous line's
+/// indent is the wrong answer and the formatter's is right.
+///
+/// How it asks: put a sentinel identifier on the empty line, format THAT, and
+/// read back the indentation the sentinel ended up with. The formatter has no
+/// opinion about a whitespace-only line — an indent on an empty line is
+/// trailing whitespace, which it strips — so giving it something to indent is
+/// the only way to get the answer, and using the real formatter means the
+/// answer cannot drift from what the next format will do.
+///
+/// Silent about every failure. This runs on every Enter, and a buffer being
+/// typed into usually does not lex.
+function indentCaretLine() {
+  if (!rustyfi || rustyfi.trapped || view === null) return;
+  const { state } = view;
+  const sel = state.selection.main;
+  if (!sel.empty) return;
+  const line = state.doc.lineAt(sel.head);
+  // Only ever act on a line that is empty or all whitespace, with the caret at
+  // its end. Anything else is a line with content the reader is working on, and
+  // its indentation belongs to the next format, not to this function.
+  if (line.text.trim() !== "" || sel.head !== line.to) return;
+
+  const SENTINEL = "rustyfiIndentProbe";
+  const probe =
+    state.doc.sliceString(0, line.from) + SENTINEL + state.doc.sliceString(line.to);
+  const out = rustyfi.format(probe, currentLang(), formatConfig());
+  if (!out.ok) return;
+  const probed = out.text.split("\n").find((l) => l.trimStart().startsWith(SENTINEL));
+  if (probed === undefined) return;
+  const indent = probed.slice(0, probed.length - probed.trimStart().length);
+  if (indent === line.text) return;
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: indent },
+    selection: { anchor: line.from + indent.length },
+  });
+}
+
 /// Reformat the source in place.
 ///
-/// Whitespace only, by construction — the module re-emits the lexer's own
-/// token stream, so nothing inside inline text, block text, math, a string
-/// literal or a comment body moves, and no token is added, dropped or
-/// reordered. That is worth saying in the reply, because "format" in most
-/// editors means something much freer.
+/// Whitespace only, by construction — the module re-emits the lexer's own token
+/// stream, so no token is added, dropped or reordered, and nothing inside a
+/// string literal or a comment body moves. It DOES re-indent program text,
+/// which is the one thing the older lex-based formatter would not do.
 ///
-/// A decline is reported and changes NOTHING. It is not "no changes": a buffer
+/// A decline changes NOTHING, and is not the same as "no changes": a buffer
 /// that does not lex has no token stream to re-emit, and the honest answer is
-/// to say so rather than to guess at what the author meant.
-function formatDoc() {
+/// to say so rather than guess at what the author meant.
+///
+/// `quiet` is what the automatic paths pass — on a newline, and on a click. It
+/// does the same edit and says nothing: a toast per line break would be
+/// unusable, and a decline is the NORMAL state of a buffer being typed into, so
+/// announcing it would be announcing "you have not finished yet" several times
+/// a sentence.
+function formatDoc(quiet = false) {
   if (!rustyfi || rustyfi.trapped || view === null) return;
   const before = getDoc();
-  const result = rustyfi.format(before, currentLang());
+  const result = rustyfi.format(before, currentLang(), formatConfig());
   if (!result.ok) {
-    showToast("The formatter declined — nothing was changed.", { note: result.error });
+    if (!quiet) {
+      showToast("The formatter declined — nothing was changed.", { note: result.error });
+    }
     return;
   }
   const change = minimalChange(before, result.text);
   if (change === null) {
-    showToast("Already formatted.", {
-      note: "This document is character-for-character what the formatter would write.",
-      ok: true,
-    });
+    if (!quiet) {
+      showToast("Already formatted.", {
+        note: "This document is character-for-character what the formatter would write.",
+        ok: true,
+      });
+    }
     return;
   }
   view.dispatch({ changes: change, scrollIntoView: true });
+  if (quiet) return;
   const delta = result.text.length - before.length;
   const n = Math.abs(delta);
   showToast("Formatted.", {
@@ -2287,7 +2623,26 @@ function formatDoc() {
 }
 
 compileBtn.addEventListener("click", typeset);
-formatBtn.addEventListener("click", formatDoc);
+// Changing a setting reformats at once, so the number and its effect are on
+// screen together. Quiet, like the other automatic paths — the visible change
+// IS the feedback, and a toast per keystroke in a number field is noise.
+for (const el of [cfgWidth, cfgTab, cfgBlank, cfgWrap, cfgInline, cfgAutoWidth]) {
+  el.addEventListener("change", () => {
+    saveFormatConfig();
+    syncAutoWidth();
+    cfgNote.textContent = "";
+    if (!rustyfi || rustyfi.trapped || view === null) return;
+    const probe = rustyfi.format(getDoc(), currentLang(), formatConfig());
+    // A rejected SETTING is worth saying; a declined DOCUMENT is not, because a
+    // buffer being typed into declines all the time. The two are told apart by
+    // the module prefixing a settings failure.
+    if (!probe.ok && probe.error.startsWith("settings:")) {
+      cfgNote.textContent = probe.error;
+      return;
+    }
+    formatDoc(true);
+  });
+}
 shareBtn.addEventListener("click", share);
 // Ctrl+Enter inside the editor is bound in its own keymap, where it can stop
 // the key from also inserting a newline; this is the same shortcut for
@@ -2296,12 +2651,6 @@ document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !view.hasFocus) {
     e.preventDefault();
     typeset();
-  }
-  // `e.key` is layout-dependent and Alt often shifts it (on a Mac Alt-f is
-  // "\u0192"), so this reads `e.code`, which names the physical key.
-  if (e.shiftKey && e.altKey && e.code === "KeyF" && !view.hasFocus) {
-    e.preventDefault();
-    formatDoc();
   }
 });
 
@@ -2312,7 +2661,33 @@ try {
   statusEl.textContent = `ready — ${rustyfi.packages(currentLang()).length} packages bundled`;
   compileBtn.disabled = false;
   shareBtn.disabled = false;
-  formatBtn.disabled = false;
+  restoreFormatConfig();
+  syncAutoWidth();
+  // Follow the pane. Debounced, because a drag fires this continuously and each
+  // reformat is a parse; and guarded on the column count actually changing, so
+  // a resize that does not cross a column boundary costs nothing.
+  if (typeof ResizeObserver === "function" && view !== null) {
+    let lastCols = editorColumns();
+    let pending = 0;
+    const ro = new ResizeObserver(() => {
+      if (!cfgAutoWidth.checked) return;
+      window.clearTimeout(pending);
+      pending = window.setTimeout(() => {
+        const cols = editorColumns();
+        if (cols === null || cols === lastCols) return;
+        lastCols = cols;
+        syncAutoWidth();
+        if (!rustyfi || rustyfi.trapped || formatting) return;
+        formatting = true;
+        try {
+          formatDoc(true);
+        } finally {
+          formatting = false;
+        }
+      }, 200);
+    });
+    ro.observe(view.contentDOM);
+  }
   // Before the first typeset, so the opening render already has the font.
   await loadBundledFont();
   if (sharedError) {

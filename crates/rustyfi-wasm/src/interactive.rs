@@ -770,7 +770,11 @@ pub fn completions_json(source: &str, lang: Lang, line: u32, character: u32) -> 
 
     // The buffer's own names first: they are in scope, which nothing in the
     // corpus index can claim.
-    let mine = rustyfi_lsp::completions(&model, byte);
+    // No dependency exports: those come from `project::check` resolving a
+    // buffer's `@require:` graph against a filesystem, and this build has
+    // none. What a package offers is answered instead by the bundled corpus
+    // index below, which is why the empty slice costs nothing here.
+    let mine = rustyfi_lsp::completions(&model, byte, &[]);
     let range = mine.first().map(|c| c.range);
     for c in &mine {
         emit(&mut out, &c.label, &c.detail, c.kind, "this document", c.range);

@@ -1440,7 +1440,142 @@ pub unsafe extern "C" fn rustyfi_index(src: *const u8, len: usize, lang: u32) ->
 /// `src` must point to at least `len` readable bytes for the duration of the
 /// call. A null `src` is only valid with `len == 0`.
 #[no_mangle]
+/// Read formatter settings out of the text a `rustyfi-fmt.toml` would hold.
+///
+/// **A deliberate subset of TOML, not a TOML parser.** Flat `key = value` lines,
+/// integers and booleans, `#` comments, blank lines. That is the whole grammar,
+/// and it is enough for every key `CstOptions` has.
+///
+/// Why a subset rather than the real thing: `config.md` section 4.2 fixes the
+/// ABI as carrying config TEXT rather than fields, so that adding an option
+/// never changes the ABI and the page's glue is written once — but the library
+/// half of that design (`FormatConfig::from_toml_str`, behind a `config`
+/// feature) does not exist yet, and pulling a TOML crate into the browser
+/// module to anticipate it would cost every visitor bytes for a feature that is
+/// five settings wide. The text this accepts is a strict subset of what the
+/// real parser will accept, so the same settings keep working when it lands and
+/// this function is deleted.
+///
+/// An unknown key is an ERROR rather than a warning, matching `config.md`
+/// section 5.3's rule and for its reason: a typo in `max_width` that silently
+/// does nothing is the worst outcome, because the user believes they configured
+/// the formatter and every later report is about the wrong thing.
+fn parse_format_config(text: &str) -> Result<rustyfi_lsp::CstOptions, String> {
+    let mut opts = rustyfi_lsp::CstOptions::default();
+    for (n, raw) in text.lines().enumerate() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(format!("line {}: expected `key = value`, found {raw:?}", n + 1));
+        };
+        let (key, value) = (key.trim(), value.trim());
+        let num = |what: &str| -> Result<usize, String> {
+            value
+                .parse::<usize>()
+                .map_err(|_| format!("line {}: {what} wants a whole number, found {value:?}", n + 1))
+        };
+        let flag = |what: &str| -> Result<bool, String> {
+            match value {
+                "true" => Ok(true),
+                "false" => Ok(false),
+                _ => Err(format!("line {}: {what} wants true or false, found {value:?}", n + 1)),
+            }
+        };
+        match key {
+            // Clamped, not rejected: a zero width would make every group break
+            // and a zero tab would make indentation invisible, and neither is
+            // what somebody dragging a slider meant.
+            "max_width" => opts.max_width = num("max_width")?.clamp(20, 1000),
+            "tab_spaces" => opts.tab_spaces = num("tab_spaces")?.clamp(1, 16),
+            "max_blank_lines" => opts.max_blank_lines = num("max_blank_lines")?.clamp(0, 32),
+            "wrap_comments" => opts.wrap_comments = flag("wrap_comments")?,
+            "wrap_inline_text" => opts.wrap_inline_text = flag("wrap_inline_text")?,
+            other => {
+                return Err(format!(
+                    "line {}: unknown setting {other:?}. Known: max_width, tab_spaces, \
+                     max_blank_lines, wrap_comments, wrap_inline_text",
+                    n + 1
+                ))
+            }
+        }
+    }
+    Ok(opts)
+}
+
+/// [`rustyfi_format`], with settings.
+///
+/// `cfg` is the text a `rustyfi-fmt.toml` would hold; a null or empty `cfg`
+/// means the built-in defaults, which makes [`rustyfi_format`] a two-line shim
+/// over this and leaves the older ABI exactly as it was.
+///
+/// Passing TEXT rather than a struct of fields is the point: adding a formatter
+/// option later changes neither this signature nor the page's JavaScript.
+///
+/// # Safety
+/// `src` must point to `len` readable bytes and `cfg` to `cfg_len`, for the
+/// duration of the call. A null pointer is only valid with a zero length.
+#[no_mangle]
+pub unsafe extern "C" fn rustyfi_format_with_config(
+    src: *const u8,
+    len: usize,
+    lang: u32,
+    cfg: *const u8,
+    cfg_len: usize,
+) -> *mut Output {
+    let cfg_bytes: &[u8] = if cfg.is_null() || cfg_len == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(cfg, cfg_len) }
+    };
+    let opts = match std::str::from_utf8(cfg_bytes) {
+        Err(e) => {
+            return Output::from_result(Err(format!("the settings are not valid UTF-8: {e}")))
+                .into_raw()
+        }
+        Ok(text) => match parse_format_config(text) {
+            Ok(opts) => opts,
+            Err(e) => return Output::from_result(Err(format!("settings: {e}"))).into_raw(),
+        },
+    };
+    unsafe { format_impl(src, len, lang, &opts) }
+}
+
 pub unsafe extern "C" fn rustyfi_format(src: *const u8, len: usize, lang: u32) -> *mut Output {
+    unsafe { format_impl(src, len, lang, &rustyfi_lsp::CstOptions::default()) }
+}
+
+/// The body both format entry points share.
+///
+/// The CST-based formatter (`format_cst`), not the lex-based `format`. The
+/// difference a reader notices is RE-INDENTATION: the old one deliberately
+/// never re-indented, because a token stream does not say how a program nests,
+/// and the only nesting it affords — a bracket counter — gets this corpus
+/// wrong. This one parses, so it can.
+///
+/// This was briefly a COMPOSITION of both, because `format_cst` re-indented but
+/// did not terminate the file, and did nothing at all for 0.1, which had no
+/// builder and took the identity path. Pointing the page at it alone therefore
+/// regressed two things the lex-based entry already did, which the self-test
+/// caught at once. Both gaps are closed — `build01.rs` covers 0.1 and
+/// `render::finish` terminates the file for both generations — so the second
+/// pass is gone. Verified rather than assumed: the page's self-test checks pass
+/// identically with and without it.
+///
+/// What holds either way: the formatter re-emits source byte ranges rather than
+/// re-rendering tokens, and verifies by re-lexing its own output, DECLINING if
+/// the token stream moved.
+///
+/// # Safety
+/// `src` must point to at least `len` readable bytes for the duration of the
+/// call. A null `src` is only valid with `len == 0`.
+unsafe fn format_impl(
+    src: *const u8,
+    len: usize,
+    lang: u32,
+    opts: &rustyfi_lsp::CstOptions,
+) -> *mut Output {
     let bytes: &[u8] = if src.is_null() || len == 0 {
         &[]
     } else {
@@ -1453,8 +1588,8 @@ pub unsafe extern "C" fn rustyfi_format(src: *const u8, len: usize, lang: u32) -
                 .into_raw()
         }
     };
-    let opts = rustyfi_lsp::FormatOptions::default();
-    match rustyfi_lsp::format(source, Lang::from_u32(lang).to_version(), &opts) {
+    let version = Lang::from_u32(lang).to_version();
+    match rustyfi_lsp::format_cst(source, version, opts) {
         Some(formatted) => Output {
             ok: true,
             bytes: formatted.into_bytes(),
